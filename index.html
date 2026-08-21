@@ -1133,6 +1133,30 @@ const ITEMS={
   candy:{n:'Doce Raro',type:'candy',price:0,desc:'Subiu 1 nível de um monstro!'},
 };
 const ITEM_ORDER=Object.keys(ITEMS);
+
+/* ---------- treinadores especiais: rivais, líderes, campeão ---------- */
+const RIVAL_TEAMS={
+ 1:{name:'Rival',team:lvl=>[[lvl.starter,lvl.base]],
+   pre:['Ah, é você!','Vamos ver o que aprendeu','até agora!'],
+   win:['Hmph! Preciso treinar mais.','Te vejo na estrada!']},
+ 2:{name:'Rival',team:lvl=>[[lvl.starter,lvl.base],['chisper',lvl.base-2],['viprel',lvl.base-2]],
+   pre:['Você por aqui?','Minha equipe está imbatível!'],
+   win:['Como você venceu?!','Isso não vai acontecer de novo!']},
+};
+const GYM_DEFS=[
+ {badge:'Insígnia Folha',tm:'navalha',name:'Ferrão',cls:'líder',team:[['asperim',12],['zangao',13],['besourox',15]],pre:['Bem-vindo ao meu ginásio!','Meus insetos vão te devorar!'],win:['Você é forte...','Leve a Insígnia Folha!']},
+ {badge:'Insígnia Punho',tm:'megapunho',name:'Fúria',cls:'líder',team:[['lutinha',21],['zangao',21],['pugilux',24]],pre:['Soco forte é a minha lei!','Prepare-se!'],win:['Respeito sua garra...','Fique com a Insígnia Punho!']},
+ {badge:'Insígnia Raio',tm:'trovao',name:'Voltz',cls:'líder',team:[['chisper',29],['eletrix',32]],pre:['Sou o mais rápido da região!','Acerte se conseguir!'],win:['Mais rápido que eu?!','A Insígnia Raio é sua!']},
+ {badge:'Insígnia Dragão',tm:'pulsodrag',name:'Drakon',cls:'líder',team:[['dragonil',39],['dragor',43]],pre:['Dragões não se curvam a ninguém!','Mostre seu valor!'],win:['Digno de enfrentar o Campeão.','Leve a Insígnia Dragão!']},
+];
+const CHAMP_DEF={name:'Campeão Ouro',cls:'campeão',pre:['Você venceu todos os líderes.','Mas o trono pertence a mim!','Venha! Mostre sua força!'],win:['Inacreditável...','Você é o novo Campeão!']};
+const CLS_MONEY={camarada:40,jovem:80,'fã':160,caçador:320,líder:1500,elite:2400,rival:900,campeão:6000};
+const HIDDEN_ITEMS={}; // mapa|x|y -> item id
+HIDDEN_ITEMS['route1|5|10']='pocao';
+HIDDEN_ITEMS['route2|5|3']='grandeBola';
+HIDDEN_ITEMS['cave|10|3']='ultraBola';
+HIDDEN_ITEMS['route3|18|11']='candy';
+HIDDEN_ITEMS['route4|19|5']='hiperpocao';
 /* ============================================================
    MAPAS — grids ASCII + NPCs + warps
    Legenda: # parede T árvore . grama , caminho G grama alta
@@ -1275,9 +1299,9 @@ MAPS.city1.warps.forEach(w=>{if(w.to==='NORTH'){w.to='route1';w.x2=12;w.y2=14;}i
   g[10][5]='i';
   MAPS.route1={n:'Rota 1',music:'route',tiles:gstr(g),
     npcs:[
-      {id:'tr1',x:16,y:2,dir:'down',sprite:'kid',trainer:{name:'Miguel',cls:'camarada',team:[['lagartix',5],['pardal',6]],reward:120}},
-      {id:'tr2',x:19,y:9,dir:'left',sprite:'girl',trainer:{name:'Clara',cls:'camarada',team:[['chisper',6],['asperim',6]],reward:120}},
-      {id:'tr3',x:9,y:13,dir:'right',sprite:'kid',trainer:{name:'Beto',cls:'camarada',team:[['tatu',6],['viprel',6]],reward:120}},
+      {id:'tr1',x:16,y:2,dir:'down',sprite:'kid',trainer:{name:'Miguel',cls:'camarada',team:[['lagartix',5],['pardal',6]]}},
+      {id:'tr2',x:19,y:9,dir:'left',sprite:'girl',trainer:{name:'Clara',cls:'camarada',team:[['chisper',6],['asperim',6]]}},
+      {id:'tr3',x:9,y:13,dir:'right',sprite:'kid',trainer:{name:'Beto',cls:'camarada',team:[['tatu',6],['viprel',6]]}},
       {id:'rival1',x:14,y:5,dir:'left',sprite:'rival',rival:1},
     ],
     warps:[
@@ -1306,9 +1330,9 @@ function routeMap(name,seed,trainerNpcs,extraWarps,extraFn){
     signs:[{x:12,y:1,text:name.toUpperCase()}],wild:null};
 }
 MAPS.route2=routeMap('Rota 2',202,[
-  {id:'tr4',x:16,y:3,dir:'down',sprite:'kid',trainer:{name:'Rita',cls:'jovem',team:[['fadinha',12],['pardom',13]],reward:260}},
-  {id:'tr5',x:9,y:9,dir:'right',sprite:'girl',trainer:{name:'Caio',cls:'jovem',team:[['tatuzao',13],['viprel',12]],reward:260}},
-  {id:'tr6',x:15,y:13,dir:'left',sprite:'kid',trainer:{name:'Duda',cls:'jovem',team:[['frostim',13],['chisper',12],['lagartix',12]],reward:260}},
+  {id:'tr4',x:16,y:3,dir:'down',sprite:'kid',trainer:{name:'Rita',cls:'jovem',team:[['fadinha',12],['pardom',13]]}},
+  {id:'tr5',x:9,y:9,dir:'right',sprite:'girl',trainer:{name:'Caio',cls:'jovem',team:[['tatuzao',13],['viprel',12]]}},
+  {id:'tr6',x:15,y:13,dir:'left',sprite:'kid',trainer:{name:'Duda',cls:'jovem',team:[['frostim',13],['chisper',12],['lagartix',12]]}},
 ],null,g=>{g[3][5]='i';});
 MAPS.route2.warps.forEach(w=>{if(w.to==='NORTH'){w.to='city1';w.x2=11;w.y2=14;}if(w.to==='SOUTH'){w.to='cave';w.x2=12;w.y2=1;}});
 MAPS.route2.wild=[['tatu',30,8,11],['viprel',25,8,12],['fadinha',25,9,12],['frostim',20,10,12]];
@@ -1323,8 +1347,8 @@ MAPS.route2.wild=[['tatu',30,8,11],['viprel',25,8,12],['fadinha',25,9,12],['fros
   g[3][10]='i';
   MAPS.cave={n:'Caverna Obscura',music:'cave',tiles:gstr(g),
     npcs:[
-      {id:'tr7',x:8,y:6,dir:'right',sprite:'grunt',trainer:{name:'Eco',cls:'caçador',team:[['morcegra',15],['pedrax',14]],reward:400}},
-      {id:'tr8',x:16,y:9,dir:'left',sprite:'grunt',trainer:{name:'Mina',cls:'caçador',team:[['sombrax',15],['zangao',15]],reward:400}},
+      {id:'tr7',x:8,y:6,dir:'right',sprite:'grunt',trainer:{name:'Eco',cls:'caçador',team:[['morcegra',15],['pedrax',14]]}},
+      {id:'tr8',x:16,y:9,dir:'left',sprite:'grunt',trainer:{name:'Mina',cls:'caçador',team:[['sombrax',15],['zangao',15]]}},
     ],
     warps:[
       {x:11,y:0,to:'route2',x2:12,y2:14,face:'down',kind:'step'},
@@ -1343,9 +1367,9 @@ MAPS.city2=cityMap('Cidade Lutadora','gym2_int','Lutador',[
 MAPS.city2.warps.forEach(w=>{if(w.to==='NORTH'){w.to='cave';w.x2=12;w.y2=14;}if(w.to==='SOUTH2'||w.to==='SOUTH'){w.to='route3';w.x2=12;w.y2=1;}});
 
 MAPS.route3=routeMap('Rota 3',404,[
-  {id:'tr9',x:16,y:3,dir:'down',sprite:'girl',trainer:{name:'Nina',cls:'fã',team:[['eletrix',20],['fadalur',20]],reward:640}},
-  {id:'tr10',x:9,y:9,dir:'right',sprite:'kid',trainer:{name:'Ivo',cls:'fã',team:[['pugilux',22],['morcegra',21]],reward:640}},
-  {id:'tr11',x:15,y:13,dir:'left',sprite:'girl',trainer:{name:'Lia',cls:'fã',team:[['psiao',22],['espectrox',21],['glacirax',20]],reward:640}},
+  {id:'tr9',x:16,y:3,dir:'down',sprite:'girl',trainer:{name:'Nina',cls:'fã',team:[['eletrix',20],['fadalur',20]]}},
+  {id:'tr10',x:9,y:9,dir:'right',sprite:'kid',trainer:{name:'Ivo',cls:'fã',team:[['pugilux',22],['morcegra',21]]}},
+  {id:'tr11',x:15,y:13,dir:'left',sprite:'girl',trainer:{name:'Lia',cls:'fã',team:[['psiao',22],['espectrox',21],['glacirax',20]]}},
 ],null,g=>{g[11][18]='i';});
 MAPS.route3.warps.forEach(w=>{if(w.to==='NORTH'){w.to='city2';w.x2=11;w.y2=14;}if(w.to==='SOUTH'){w.to='city3';w.x2=12;w.y2=1;}});
 MAPS.route3.wild=[['mentax',28,16,19],['assombrix',25,16,19],['lutinha',25,17,20],['metalim',22,17,20]];
@@ -1357,9 +1381,9 @@ MAPS.city3=cityMap('Cidade Raio','gym3_int','Elétrico',[
 MAPS.city3.warps.forEach(w=>{if(w.to==='NORTH'){w.to='route3';w.x2=12;w.y2=14;}if(w.to==='SOUTH2'||w.to==='SOUTH'){w.to='route4';w.x2=12;w.y2=1;}});
 
 MAPS.route4=routeMap('Rota 4',505,[
-  {id:'tr12',x:16,y:3,dir:'down',sprite:'elite',trainer:{name:'Cássio',cls:'elite',team:[['dragor',30],['glacirax',29]],reward:1200}},
-  {id:'tr13',x:9,y:9,dir:'right',sprite:'elite',trainer:{name:'Aurora',cls:'elite',team:[['psiao',31],['umbrax',30],['aceir',30]],reward:1200}},
-  {id:'tr14',x:15,y:13,dir:'left',sprite:'elite',trainer:{name:'Tadeu',cls:'elite',team:[['espectrox',30],['pugilux',31],['dragor',31]],reward:1200}},
+  {id:'tr12',x:16,y:3,dir:'down',sprite:'elite',trainer:{name:'Cássio',cls:'elite',team:[['dragor',30],['glacirax',29]]}},
+  {id:'tr13',x:9,y:9,dir:'right',sprite:'elite',trainer:{name:'Aurora',cls:'elite',team:[['psiao',31],['umbrax',30],['aceir',30]]}},
+  {id:'tr14',x:15,y:13,dir:'left',sprite:'elite',trainer:{name:'Tadeu',cls:'elite',team:[['espectrox',30],['pugilux',31],['dragor',31]]}},
   {id:'rival2',x:14,y:5,dir:'left',sprite:'rival',rival:2},
 ],null,g=>{g[5][19]='i';});
 MAPS.route4.warps.forEach(w=>{if(w.to==='NORTH'){w.to='city3';w.x2=11;w.y2=14;}if(w.to==='SOUTH'){w.to='city4';w.x2=12;w.y2=1;}});
@@ -1396,24 +1420,13 @@ const G={mode:'boot',battle:null,uiStack:[],menuIdx:0,camX:0,camY:0,tick:0};
 
 function newMonster(id,lv){
   const sp=SPECIES[id];const st=statsOf(id,lv);
-  const moves=[];let idx=0;
+  const moves=[];
   const learn=sp.learn.filter(x=>x[0]<=lv).sort((a,b)=>a[0]-b[0]);
   for(let i=Math.max(0,learn.length-4);i<learn.length;i++)moves.push({id:learn[i][1],pp:MOVES[learn[i][1]].pp});
   if(!moves.length)moves.push({id:'tacada',pp:35});
   return {id,lv,exp:0,hp:st.hp,status:null,moves,stages:{atk:0,def:0,spa:0,spd:0,spe:0,acc:0,eva:0},shiny:false,gender:'?',caughtAt:null};
 }
-function statsOf(id,lv){
-  const b=SPECIES[id].stats;
-  return {hp:Math.max(1,Math.floor(2*b.hp*lv/100)+lv+10),
-    atk:Math.floor(2*b.atk*lv/100)+5,def:Math.floor(2*b.def*lv/100)+5,
-    spa:Math.floor(2*b.spa*lv/100)+5,spd:Math.floor(2*b.spd*lv/100)+5,
-    spe:Math.floor(2*b.spe*lv/100)+5};
-}
-function curStats(m){const b=SPECIES[m.id].stats,lv=m.lv;
-  return {hp:Math.max(1,Math.floor(2*b.hp*lv/100)+lv+10),
-    atk:Math.floor(2*b.atk*lv/100)+5,def:Math.floor(2*b.def*lv/100)+5,
-    spa:Math.floor(2*b.spa*lv/100)+5,spd:Math.floor(2*b.spd*lv/100)+5,
-    spe:Math.floor(2*b.spe*lv/100)+5};}
+function statsOf(id,lv){return curStatsMon({id,lv});}
 function expToNext(lv){return Math.floor(lv*lv*lv*0.8);}
 function saveGame(){
   try{localStorage.setItem(SAVE_KEY,JSON.stringify(S));AudioSys.blip();showToast('Jogo salvo!');}catch(e){showToast('Falha ao salvar!');}
@@ -1736,7 +1749,7 @@ function signAt(x,y){
   for(const s of m.signs)if(s.x===x&&s.y===y)return s;
   return null;
 }
-function healAll(){for(const m of S.party){m.hp=curStats(m).hp;m.status=null;for(const mv of m.moves)mv.pp=MOVES[mv.id].pp;}AudioSys.heal();}
+function healAll(){for(const m of S.party){m.hp=curStatsMon(m).hp;m.status=null;for(const mv of m.moves)mv.pp=MOVES[mv.id].pp;}AudioSys.heal();}
 function showMsgLines(lines,fn){
   let i=0;
   const next=()=>{if(i>=lines.length){if(fn)fn();return;}showMsg(lines[i]).then(next);i++;};
@@ -1766,7 +1779,6 @@ function curStatsMon(m){const b=SPECIES[m.id].stats,lv=m.lv;
     spa:Math.floor(2*b.spa*lv/100)+5,spd:Math.floor(2*b.spd*lv/100)+5,
     spe:Math.floor(2*b.spe*lv/100)+5};}
 function maxHp(m){return curStatsMon(m).hp;}
-function monStatus(m){return m.status||null;}
 const STATUS_PT={psn:'VEN',brn:'QUE',par:'PAR',slp:'DOR',frz:'CON',conf:'CONF'};
 
 async function battleMain(){
@@ -1889,9 +1901,9 @@ async function execAction(side,move){
     }
     if(user.conf<=0){user.conf=null;await battleMsg(SPECIES[user.id].n+' saiu da confusão!');}
   }
-  /* acurácia */
-  if(mv.a<101&&side==='player'){
-    const acc=Math.min(1,mv.a/100*stageMult(user.stages.acc)/stageMult(target.stages.eva||0));
+  /* acurácia (vale para os dois lados) */
+  if(mv.a<101){
+    const acc=Math.min(1,mv.a/100*stageMult(user.stages.acc||0)/stageMult(target.stages.eva||0));
     if(!chance(acc)){await battleMsg(SPECIES[user.id].n+' errou o ataque!');return;}
   }
   /* movimentos de status */
@@ -1953,7 +1965,6 @@ function applyStages(m,stages){
   for(const k in stages){
     const v=clamp((m.stages[k]||0)+stages[k],-6,6);
     m.stages[k]=v;
-    const dir=stages[k]>0?'subiu':'caiu';
   }
 }
 async function applyEffect(user,target,eff){
@@ -2102,12 +2113,28 @@ async function battleWin(){
   }
   B.over=true;
 }
+/* posição externa da porta do Centro mais recente (para o warp "voltar" pós-whiteout) */
+function centerOutside(){
+  if(S.lastCenter&&S.lastCenter.map!=='center_int'){
+    const m=MAPS[S.lastCenter.map];
+    const w=m&&m.warps?m.warps.find(w=>w.to==='center_int'):null;
+    if(w)return {map:S.lastCenter.map,x:w.x,y:w.y};
+  }
+  for(const id in MAPS){
+    const m=MAPS[id];
+    const w=m&&m.warps?m.warps.find(w=>w.to==='center_int'):null;
+    if(w)return {map:id,x:w.x,y:w.y};
+  }
+  return null;
+}
 async function whiteOut(){
   const B=G.battle;
   await battleMsg('Você não tem mais monstros capazes de lutar!');
   await battleMsg('Você desmaiou... e foi levado ao Centro Pokémon.');
   S.money=Math.floor(S.money/2);
   healAll();
+  const wake=centerOutside();
+  if(wake)S.prev=wake;
   if(S.lastCenter){teleport(S.lastCenter.map,S.lastCenter.x,S.lastCenter.y,'up');}
   else teleport('center_int',6,8,'down');
   B.over=true;
@@ -2117,7 +2144,6 @@ async function switchIn(idx){
   B.pIndex=idx;
   await sendOutPlayer();
 }
-async function tryRun(){}
 /* captura */
 async function useItemInBattle(itemId){
   const B=G.battle;const it=ITEMS[itemId];
@@ -2158,7 +2184,7 @@ async function useItemInBattle(itemId){
   }
   if(it.type==='candy'){
     const pm=pMon();
-    if(pm.hp<=0){await battleMsg('Só pode usar em monstros desmaiados fora da batalha!');S.bag[itemId]++;return;}
+    if(pm.hp<=0){await battleMsg('Não dá para usar em um monstro desmaiado!');S.bag[itemId]++;return;}
     pm.exp+=expToNext(pm.lv);
     await battleMsg(SPECIES[pm.id].n+' subiu de nível!');
     await levelUp(pm);await tryEvolve(pm);
@@ -2188,10 +2214,12 @@ async function useItemInBattle(itemId){
   }
 }
 async function levelUp(m){
-  const before=curStatsMon(m);
-  const gained=maxHp(m)-before.hp;
+  const oldMax=maxHp({id:m.id,lv:m.lv-1});
+  const newMax=maxHp(m);
+  const gained=Math.max(0,newMax-oldMax);
   AudioSys.levelup();
   await battleMsg(SPECIES[m.id].n+' subiu para o nível '+m.lv+'!');
+  m.hp=Math.min(newMax,m.hp+gained);
   UI.battleRefresh();
   /* aprender movimento */
   const sp=SPECIES[m.id];
@@ -2238,6 +2266,8 @@ async function endBattle(){
   G.battle=null;
   if(S.party.every(m=>m.hp<=0)&&!wasWild){
     healAll();
+    const wake=centerOutside();
+    if(wake)S.prev=wake;
     if(S.lastCenter)teleport(S.lastCenter.map,S.lastCenter.x,S.lastCenter.y,'up');
     else teleport('center_int',6,8,'down');
     await showMsg('Todos os seus monstros desmaiaram...');
@@ -2251,23 +2281,18 @@ async function endBattle(){
   }
   teleport(S.map,P.x,P.y,P.dir);
   if(wasWild)checkApproach();
-  else{
-    const n=npcAt(S.map,P.x,P.y);
-  }
   saveGame();
 }
-function battleMoveName(m){return MOVES[m.id].n;}
 /* ============================================================
    UI — camada DOM (menus, diálogos, listas)
    ============================================================ */
-const UI={msgResolve:null,onA:null,onB:null,keyNav:null,mode:'overworld',clickLock:0};
+const UI={msgResolve:null,onA:null,onB:null,keyNav:null,clickLock:0};
 const uiRoot=()=>$('ui');
 /* trava curta pós-diálogo: evita que o clique de fechamento selecione um item recém-exibido */
 uiRoot().addEventListener('click',e=>{
   if(UI.clickLock&&performance.now()<UI.clickLock){e.stopPropagation();e.preventDefault();}
 },{capture:true});
 function closeOverlays(){uiRoot().innerHTML='';UI.msgResolve=null;UI.onA=null;UI.onB=null;UI.keyNav=null;touchBar();}
-function waitClick(fn){const h=()=>{cleanup();fn();};const cleanup=()=>{UI.msgResolve=null;};UI.msgResolve=h;}
 Input.bind('A',()=>{if(UI.onA){const f=UI.onA;UI.onA=null;f();}else if(UI.msgResolve){const f=UI.msgResolve;UI.msgResolve=null;f();}else if(G.mode==='overworld'){doInteract();}});
 Input.bind('B',()=>{if(UI.onB){const f=UI.onB;UI.onB=null;f();}else if(UI.keyNav){}});
 Input.bind('M',()=>{if(G.mode==='overworld'&&!UI.msgResolve)UI.menuOpen();});
@@ -2384,7 +2409,7 @@ function titleOpen(){
   });};
   const pick=i=>{
     if(i===0){AudioSys.confirm();introStart();}
-    if(i===1&&hasSave()){AudioSys.confirm();loadGame();teleport(S.map,S.x,S.y,S.dir);UI.mode='overworld';showMsg('Bem-vindo de volta, '+S.name+'!');}
+    if(i===1&&hasSave()){AudioSys.confirm();loadGame();teleport(S.map,S.x,S.y,S.dir);showMsg('Bem-vindo de volta, '+S.name+'!');}
     if(i===2&&hasSave()){clearSave();render();showToast('Save apagado.');}
   };
   UI.keyNav=d=>{const n=typeof d==='string'?(d==='up'||d==='left'?-1:1):(d>0?1:-1);sel=Math.min(2,Math.max(0,sel+n));render();AudioSys.blip();};
@@ -2476,7 +2501,6 @@ async function dexOpen(){
     return row;
   }});
   if(idx==='back'||!seen.length)return;
-  const id=DEX_ORDER[items[idx].split('|')[0]===undefined?0:DEX_ORDER.indexOf(items[idx].split('|')[0])];
   const sp=SPECIES[items[idx].split('|')[0]];
   await showMsg('Nº'+pad(DEX_ORDER.indexOf(sp.id)+1)+' — '+sp.n+' ('+sp.types.map(t=>TYPE_PT[t]).join('/')+')');
   await showMsg(sp.dex);
@@ -2799,10 +2823,10 @@ function battleHit(side,crit){
   }
   burstFx(fx,el,crit?14:8);
 }
-function burstFx(fx,el,n){
-  if(!fx||!el)return;
+function burstFx(fx,src,n){
+  if(!fx||!src)return;
   const fr=fx.getBoundingClientRect();if(!fr.width||!fr.height)return;
-  const er=el.getBoundingClientRect();
+  const er=src.getBoundingClientRect();
   const cx=(er.left+er.width/2-fr.left)/fr.width*240;
   const cy=(er.top+er.height/2-fr.top)/fr.height*160;
   for(let i=0;i<n;i++){
@@ -3076,40 +3100,12 @@ function boot(){
   titleOpen();
   G.mode='title';
   requestAnimationFrame(frameLoop);
-  window.__game={S,P,G,teleport,MAPS,SPECIES,MOVES,newMonster,startTrainerBattle,startRivalBattle,startGymBattle,startChampBattle,battleOpen,battleRefresh,UI,monsterSprite,pxCanvas,checkApproach};
+  if(new URLSearchParams(location.search).has('debug')){
+    window.__game={S,P,G,teleport,MAPS,SPECIES,MOVES,newMonster,startTrainerBattle,startRivalBattle,startGymBattle,startChampBattle,battleOpen,battleRefresh,UI,monsterSprite,pxCanvas,checkApproach};
+  }
 }
 boot();
-/* __NEXT__ */
 
-
-
-
-
-/* treinadores especiais: rivais, líderes, campeão */
-const RIVAL_TEAMS={
- 1:{name:'Rival',team:lvl=>[[lvl.starter,lvl.base]],
-   pre:['Ah, é você!','Vamos ver o que aprendeu','até agora!'],
-   win:['Hmph! Preciso treinar mais.','Te vejo na estrada!']},
- 2:{name:'Rival',team:lvl=>[[lvl.starter,lvl.base],['chisper',lvl.base-2],['viprel',lvl.base-2]],
-   pre:['Você por aqui?','Minha equipe está imbatível!'],
-   win:['Como você venceu?!','Isso não vai acontecer de novo!']},
-};
-const GYM_DEFS=[
- {badge:'Insígnia Folha',tm:'navalha',name:'Ferrão',cls:'líder',team:[['asperim',12],['zangao',13],['besourox',15]],pre:['Bem-vindo ao meu ginásio!','Meus insetos vão te devorar!'],win:['Você é forte...','Leve a Insígnia Folha!']},
- {badge:'Insígnia Punho',tm:'megapunho',name:'Fúria',cls:'líder',team:[['lutinha',21],['zangao',21],['pugilux',24]],pre:['Soco forte é a minha lei!','Prepare-se!'],win:['Respeito sua garra...','Fique com a Insígnia Punho!']},
- {badge:'Insígnia Raio',tm:'trovao',name:'Voltz',cls:'líder',team:[['chisper',29],['eletrix',32]],pre:['Sou o mais rápido da região!','Acerte se conseguir!'],win:['Mais rápido que eu?!','A Insígnia Raio é sua!']},
- {badge:'Insígnia Dragão',tm:'pulsodrag',name:'Drakon',cls:'líder',team:[['dragonil',39],['dragor',43]],pre:['Dragões não se curvam a ninguém!','Mostre seu valor!'],win:['Digno de enfrentar o Campeão.','Leve a Insígnia Dragão!']},
-];
-const CHAMP_DEF={name:'Campeão Ouro',cls:'campeão',pre:['Você venceu todos os líderes.','Mas o trono pertence a mim!','Venha! Mostre sua força!'],win:['Inacreditável...','Você é o novo Campeão!']};
-const CLS_MONEY={camarada:40,jovem:80,'fã':160,caçador:320,líder:1500,elite:2400,rival:900,campeão:6000};
-const HIDDEN_ITEMS={}; // mapa|x|y -> item id
-HIDDEN_ITEMS['route1|5|10']='pocao';
-HIDDEN_ITEMS['route2|5|3']='grandeBola';
-HIDDEN_ITEMS['cave|10|3']='ultraBola';
-HIDDEN_ITEMS['route3|18|11']='candy';
-HIDDEN_ITEMS['route4|19|5']='hiperpocao';
-/* __NEXT__ */
-/* __NEXT__ */
 
 
 </script>

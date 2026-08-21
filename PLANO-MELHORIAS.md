@@ -23,6 +23,13 @@
 | 11 | Sem testes automatizados e sem README | projeto | Regressão silenciosa; onboarding |
 | 12 | `window.__game` expõe internals sempre | boot | Backdoor de debug sempre ativo |
 
+## Status
+
+- ✅ **Fase 0 — Fundação** (commit `0a5ba60`): git init, `.gitignore`, README.
+- ✅ **Fase 1 — Higiene** (commit `2ac4…`): stats unificadas, código morto removido, dados movidos antes do `boot()`, `reward` removido (recompensa vem de `CLS_MONEY`), `window.__game` atrás de `?debug`.
+- ✅ **Fase 2 — Bugs** (commit `2ac4…`): precisão do inimigo, level-up cura PS, mensagem do Doce Raro, `S.prev` pós-whiteout, e **bug crítico descoberto na verificação**: `burstFx` chamava o parâmetro `el` (um elemento DOM) como função — **toda batalha abortava no primeiro golpe com dano** ("A batalha travou: el is not a function"). Corrigido renomeando o parâmetro para `src`.
+- ⏳ Fases 3–6 pendentes (ver abaixo).
+
 ---
 
 ## Fases
