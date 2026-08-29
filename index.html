@@ -117,7 +117,8 @@ canvas#world{
     radial-gradient(circle at 50% 20%,rgba(69,87,158,.5),transparent 40%),
     radial-gradient(circle at 30% 70%,rgba(80,40,120,.2),transparent 50%),
     linear-gradient(180deg,#111a36 0%,#0a0e20 50%,#05070d 100%);
-  text-align:center;flex-direction:column;gap:8px;
+  text-align:center;flex-direction:column;gap:3px;
+  justify-content:flex-start;padding-top:4px;
 }
 #title:before{
   content:"";
@@ -126,20 +127,19 @@ canvas#world{
   opacity:.65;
 }
 #title h1{
-  font-size:clamp(22px,8vw,32px);color:var(--gold);letter-spacing:3px;
+  font-size:clamp(18px,6vw,24px);color:var(--gold);letter-spacing:3px;
   text-shadow:2px 2px 0 #9b303b,3px 3px 0 #6b2028,5px 5px 0 #000,0 0 30px rgba(255,216,90,.2);
-  transform:translateY(-3px);
   animation:titlepulse 2.5s ease-in-out infinite
 }
 @keyframes titlepulse{0%,100%{text-shadow:2px 2px 0 #9b303b,3px 3px 0 #6b2028,5px 5px 0 #000}50%{text-shadow:2px 2px 0 #b0404a,3px 3px 0 #803038,5px 5px 0 #000,0 0 20px rgba(255,216,90,.3)}}
-#title .sub{color:#b9c5e4;font-size:10px}
+#title .sub{color:#b9c5e4;font-size:9px}
 #title .menu{
-  display:flex;flex-direction:column;gap:7px;
-  margin-top:8px;min-width:118px
+  display:flex;flex-direction:column;gap:2px;
+  margin-top:2px;min-width:118px
 }
 #title .tm{
-  padding:8px 14px;font-weight:bold;color:#d7e0f8;
-  cursor:pointer;font-size:14px;border:1px solid transparent;
+  padding:4px 8px;font-weight:bold;color:#d7e0f8;
+  cursor:pointer;font-size:12px;border:1px solid transparent;
   border-radius:6px;transition:background .15s
 }
 #title .tm.sel{
@@ -150,8 +150,8 @@ canvas#world{
 }
 #title .tm.sel:before{content:"▶ "}
 #title .credit{
-  position:absolute;bottom:7px;left:0;right:0;
-  color:#68728d;font-size:8px
+  position:absolute;bottom:4px;left:0;right:0;
+  color:#68728d;font-size:7px
 }
 
 /* ---------- menus / lists ---------- */
@@ -254,17 +254,17 @@ canvas#world{
 /* HP boxes: z:4 above sprites */
 #battle .hbox{
   position:absolute;
-  min-width:100px;
+  min-width:92px;
   background:linear-gradient(180deg,rgba(18,26,48,.97),rgba(6,10,22,.97));
-  border:2px solid #c0cce8;border-radius:10px;
-  padding:5px 10px;min-width:118px;z-index:4;
+  border:2px solid #c0cce8;border-radius:9px;
+  padding:3px 7px;z-index:4;
   box-shadow:0 2px 8px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.1)
 }
-#battle .hbox.ohp{left:2.5%;top:1.5%}
-#battle .hbox.php{right:2.5%;bottom:66%}
+#battle .hbox.ohp{left:1.5%;top:1.5%}
+#battle .hbox.php{right:1.5%;top:1.5%}
 #battle .btype{
-  display:inline-block;margin-left:5px;padding:0 4px;border-radius:5px;
-  font-size:7.5px;line-height:11px;font-weight:bold;color:#fff;letter-spacing:.4px;
+  display:inline-block;margin-left:4px;padding:0 3px;border-radius:5px;
+  font-size:7px;line-height:10px;font-weight:bold;color:#fff;letter-spacing:.3px;
   text-shadow:1px 1px 0 rgba(0,0,0,.55);vertical-align:2px;border:1px solid rgba(255,255,255,.25)
 }
 #battle .hpwrap{
@@ -471,7 +471,7 @@ body.touch.landscape .msgbox{
 }
 body.touch.landscape #battle .battle-msg{height:30%}
 body.touch.landscape #battle .ply{bottom:34%}
-body.touch.landscape #battle .hbox.php{bottom:66%}
+body.touch.landscape #battle .hbox.php{top:1.5%}
 body.touch.landscape #battle .opp{top:8%}
 body.touch.landscape #battle .hbox.ohp{top:1.5%}
 body.touch.landscape #battle .status{top:14%}
@@ -494,7 +494,7 @@ body.touch.portrait.in-battle #battle .cmd,body.touch.portrait.in-battle #battle
 }
 body.touch.portrait.in-battle #battle .battle-msg{height:30%}
 body.touch.portrait.in-battle #battle .ply{bottom:34%}
-body.touch.portrait.in-battle #battle .hbox.php{bottom:66%}
+body.touch.portrait.in-battle #battle .hbox.php{top:1.5%}
 body.touch.portrait.in-battle #battle .list{height:46%}
 body.touch.portrait.in-battle #battle .opp{top:8%}
 body.touch.portrait.in-battle #battle .hbox.ohp{top:1.5%}
