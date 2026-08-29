@@ -50,10 +50,33 @@ python -m http.server 8765 --bind 127.0.0.1
 | J — Hall da Fama reabre após toda batalha pós-campeão | captura selvagem pós-campeão → mode "hall" | flag `hallShown` | fuga pós-campeão → overworld |
 | Menores | vitória no campeão não salvava; caverna sem música | `saveGame()` antes do hall; seq `cave` | beat_champ persistido |
 
+## Verificação visual com modelo de visão (rodada posterior)
+
+Na rodada posterior o modelo de visão configurado respondeu normalmente; os 8 estados-chave
+foram re-capturados e analisados com checklist (sobreposição, corte de texto, contraste,
+alinhamento, grade oculta):
+
+| Estado | Veredito do modelo de visão |
+|--------|-----------------------------|
+| Título (com save) | ❌ logo MONSTROQUEST cortado no topo; CONTINUAR sobrepondo rodapé; APAGAR SAVE fora da tela → **corrigido** |
+| Overworld | ✅ pixel art íntegra, sem distorção |
+| Menu principal | ✅ itens legíveis, contraste bom, painel íntegro |
+| Loja | ✅ legível; layout de preço em 2 linhas (design) |
+| Batalha (mensagem) | ❌ caixas HP sobrepostas (16px) e desalinhadas; nome "Aquore" com margem apertada → **corrigido** |
+| Hall da fama | ✅ tudo legível, botão "Continuar jogando" visível |
+| Batalha pós-fix (final) | ✅ caixas alinhadas, nomes completos, mensagem visível, grade oculta |
+| Título pós-fix (final) | ✅ logo completo, 3 itens, rodapé livre, contraste bom |
+
+Correções de layout aplicadas (commit `bc53564`):
+- `#title`: layout compacto (gap/padding/fonte), `justify-content:flex-start` — logo visível
+  por inteiro, 3 itens do menu dentro da área, rodapé sem sobreposição.
+- `#battle .hbox`: `min-width:92px`, padding compacto, ambas as caixas `top:1.5%` —
+  sem sobreposição (folga 97px), topo alinhado, nomes com margem de 10px.
+
 ## Notas de ambiente
 
-- Modelo de visão (Gemini) indisponível nesta sessão ("Budget 0 is invalid") — a verificação
-  visual foi feita por geometria de DOM (getBoundingClientRect, z-index, overlap) e capturas
-  em disco; julgamento estético final fica como verificação humana pendente.
+- Modelo de visão indisponível na rodada inicial ("Budget 0 is invalid") — contornado com
+  geometria de DOM + screenshots; **verificação visual completa realizada na rodada
+  posterior** (tabela acima).
 - Interação em dispositivo físico Android (gestos reais, áudio, haptics, PWA) não é
   automatizável neste ambiente — lista de verificação manual pendente (ver relatório).
