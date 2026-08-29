@@ -1429,14 +1429,14 @@ function newMonster(id,lv){
 }
 function statsOf(id,lv){return curStatsMon({id,lv});}
 function expToNext(lv){return Math.floor(lv*lv*lv*0.8);}
-function saveGame(){
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify(S));AudioSys.blip();showToast('Jogo salvo!');}catch(e){showToast('Falha ao salvar!');}
+function saveGame(silent){
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify(S));AudioSys.blip();if(!silent)showToast('Jogo salvo!');}catch(e){if(!silent)showToast('Falha ao salvar!');}
 }
 function hasSave(){try{return !!localStorage.getItem(SAVE_KEY);}catch(e){return false;}}
 function loadGame(){
   try{const raw=localStorage.getItem(SAVE_KEY);if(!raw)return false;
     const d=JSON.parse(raw);
-    if(!d||typeof d!=='object'||!Array.isArray(d.party)||typeof d.map!=='string'||!MAPS[d.map])return false;
+    if(!d||typeof d!=='object'||!Array.isArray(d.party)||!d.party.length||typeof d.map!=='string'||!MAPS[d.map])return false;
     Object.assign(S,d);S.dexSeen=d.dexSeen||{};S.dexCaught=d.dexCaught||{};S.bag=d.bag||{};S.flags=d.flags||{};S.badges=d.badges||[];S.party=d.party||[];
     S.box=d.box||[];S.lastCenter=d.lastCenter||null;
     (S.party||[]).forEach(m=>{if(!m.stages)m.stages={atk:0,def:0,spa:0,spd:0,spe:0,acc:0,eva:0};});
@@ -1729,7 +1729,10 @@ function doInteract(){
     if(npc.dir!==P.dir)npc.dir=faceOf(P.x-npc.x,P.y-npc.y);
     if(npc.trainer&&!S.flags['beat_'+npc.id]){startTrainerBattle(npc);return;}
     if(npc.rival&&!S.flags['beat_'+npc.id]){startRivalBattle(npc,npc.id==='rival2'?2:1);return;}
-    if(npc.gym!==undefined&&!S.flags['beat_leader'+npc.gym]){startGymBattle(npc);return;}
+    if(npc.gym!==undefined){
+      if(S.flags['beat_leader'+npc.gym]){showMsg('Você já venceu o Líder '+GYM_DEFS[npc.gym].name+' deste ginásio!');return;}
+      startGymBattle(npc);return;
+    }
     if(npc.champ&&!S.flags.beat_champ){startChampBattle();return;}
     if(npc.gate!==undefined&&S.badges.length<npc.gate+1){showMsg(npc.text[0]).then(()=>showMsg(npc.text[1]));return;}
     if(npc.id==='nurse'){S.lastCenter={map:S.map,x:P.x,y:P.y};healAll();showMsg('Seus monstros foram totalmente curados!').then(()=>saveGame());return;}
@@ -2279,7 +2282,7 @@ async function endBattle(){
   }
   if(S.flags.beat_champ&&S.badges.length===4&&!S.flags.hallShown){
     S.flags.hallShown=true;
-    saveGame();
+    saveGame(true);
     G.mode='hall';
     UI.hallOpen();
     return;
@@ -2437,6 +2440,9 @@ function titleOpen(){
 /* ---------- intro: nome + inicial ---------- */
 async function introStart(){
   closeOverlays();AudioSys.stopMusic();
+  Object.assign(S,{name:'Treinador',money:3000,badges:[],party:[],bag:{pocao:5,pokeBola:5},
+    dexSeen:{},dexCaught:{},flags:{},box:[],map:'town1',x:12,y:13,dir:'up',starter:null,
+    prev:null,playtime:0});
   const name=await askName();
   S.name=name||'Rui';
   await showMsg('Olá, '+S.name+'! Seja bem-vindo ao mundo dos monstros!');
