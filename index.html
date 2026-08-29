@@ -771,6 +771,7 @@ const AudioSys={
     const seq={title:[[392,1],[523,1],[659,1],[523,1],[392,1],[330,1],[392,2]],
       town:[[262,.5],[330,.5],[392,.5],[523,.5],[392,.5],[330,.5],[262,1],[220,1]],
       route:[[196,.4],[196,.4],[233,.4],[262,.4],[196,.4],[262,.4],[311,.4],[330,1]],
+      cave:[[196,.5],[165,.5],[131,.5],[165,.5],[196,.5],[147,.5],[131,1]],
       battle:[[523,.18],[659,.18],[784,.18],[659,.18],[523,.18],[659,.18],[880,.18],[784,.36]],
       champion:[[262,.2],[330,.2],[392,.2],[494,.2],[523,.2],[494,.2],[392,.2],[330,.4]]}[kind]||null;
     if(!seq)return;
@@ -1237,22 +1238,22 @@ MAPS.center_int.warps.forEach(w=>{w.to='back';w.x2=0;w.y2=0;});
 MAPS.mart_int=interior12('Loja de Itens',[{id:'clerk',x:4,y:4,dir:'down',sprite:'clerk'}],'M');
 MAPS.mart_int.warps.forEach(w=>{w.to='back';w.x2=0;w.y2=0;});
 
-function gymMap(name,leaderId,leaderText){
+function gymMap(name,leaderId,leaderText,gymIdx){
   const g=mk(14,12);box(g,0,0,14,12);
   for(let yy=2;yy<11;yy++)for(let xx=2;xx<12;xx++)if(g[yy][xx]==='.')g[yy][xx]='f';
   g[2][3]='^';g[3][3]='^';g[10][3]='^';g[11][3]='^';g[2][9]='^';g[3][9]='^';g[10][9]='^';g[11][9]='^';g[7][3]='S';
   return {n:name,music:'battle',tiles:gstr(g),
-    npcs:[{id:leaderId,x:7,y:2,dir:'down',sprite:'leader'}],
+    npcs:[{id:leaderId,x:7,y:2,dir:'down',sprite:'leader',gym:gymIdx}],
     warps:[{x:6,y:11,to:'EXIT',x2:0,y2:0,face:'up',kind:'step'},{x:7,y:11,to:'EXIT',x2:0,y2:0,face:'up',kind:'step'}],
     signs:[{x:7,y:4,text:leaderText}],wild:null};
 }
-MAPS.gym1_int=gymMap('Ginásio Inseto','leader1','Treinador de Insetos, Ferrão!');
+MAPS.gym1_int=gymMap('Ginásio Inseto','leader1','Treinador de Insetos, Ferrão!',0);
 MAPS.gym1_int.warps.forEach(w=>{w.to='back';w.x2=4;w.y2=6;});
-MAPS.gym2_int=gymMap('Ginásio Lutador','leader2','Lutadora lendária, Fúria!');
+MAPS.gym2_int=gymMap('Ginásio Lutador','leader2','Lutadora lendária, Fúria!',1);
 MAPS.gym2_int.warps.forEach(w=>{w.to='back';w.x2=4;w.y2=6;});
-MAPS.gym3_int=gymMap('Ginásio Elétrico','leader3','Mestre da velocidade, Voltz!');
+MAPS.gym3_int=gymMap('Ginásio Elétrico','leader3','Mestre da velocidade, Voltz!',2);
 MAPS.gym3_int.warps.forEach(w=>{w.to='back';w.x2=4;w.y2=6;});
-MAPS.gym4_int=gymMap('Ginásio Dragão','leader4','O domador de dragões, Drakon!');
+MAPS.gym4_int=gymMap('Ginásio Dragão','leader4','O domador de dragões, Drakon!',3);
 MAPS.gym4_int.warps.forEach(w=>{w.to='back';w.x2=4;w.y2=6;});
 
 /* cidades padrão: ginásio/casa esq, mart dir topo, center dir baixo */
@@ -1434,9 +1435,12 @@ function saveGame(){
 function hasSave(){try{return !!localStorage.getItem(SAVE_KEY);}catch(e){return false;}}
 function loadGame(){
   try{const raw=localStorage.getItem(SAVE_KEY);if(!raw)return false;
-    const d=JSON.parse(raw);Object.assign(S,d);S.dexSeen=d.dexSeen||{};S.dexCaught=d.dexCaught||{};S.bag=d.bag||{};S.flags=d.flags||{};S.badges=d.badges||[];S.party=d.party||[];
-  (S.party||[]).forEach(m=>{if(!m.stages)m.stages={atk:0,def:0,spa:0,spd:0,spe:0,acc:0,eva:0};});
-  return true;
+    const d=JSON.parse(raw);
+    if(!d||typeof d!=='object'||!Array.isArray(d.party)||typeof d.map!=='string'||!MAPS[d.map])return false;
+    Object.assign(S,d);S.dexSeen=d.dexSeen||{};S.dexCaught=d.dexCaught||{};S.bag=d.bag||{};S.flags=d.flags||{};S.badges=d.badges||[];S.party=d.party||[];
+    S.box=d.box||[];S.lastCenter=d.lastCenter||null;
+    (S.party||[]).forEach(m=>{if(!m.stages)m.stages={atk:0,def:0,spa:0,spd:0,spe:0,acc:0,eva:0};});
+    return true;
   }catch(e){return false;}
 }
 function clearSave(){try{localStorage.removeItem(SAVE_KEY);}catch(e){}}
@@ -1473,7 +1477,8 @@ const DY={up:-1,down:1,left:0,right:0};
 const OPPOSITE={up:'down',down:'up',left:'right',right:'left'};
 
 function teleport(mapId,x,y,face){
-  S.map=mapId;P.x=x;P.y=y;P.dir=face||'down';P.moving=false;P.px=x*TILE_W;P.py=y*TILE_H;
+  S.map=mapId;S.x=x;S.y=y;S.dir=face||'down';
+  P.x=x;P.y=y;P.dir=face||'down';P.moving=false;P.px=x*TILE_W;P.py=y*TILE_H;
   G.camX=clamp(P.px+8-VIEW_W/2,0,Math.max(0,MAPS[mapId].tiles[0].length*TILE_W-VIEW_W));
   G.camY=clamp(P.py+8-VIEW_H/2,0,Math.max(0,MAPS[mapId].tiles.length*TILE_H-VIEW_H));
   AudioSys.startMusic(MAPS[mapId].music);
@@ -1499,7 +1504,7 @@ function tryStep(dx,dy){
       const item=HIDDEN_ITEMS[S.map+'|'+tx+'|'+ty];
       if(item){S.bag[item]=(S.bag[item]||0)+1;AudioSys.item();showMsg('Você encontrou: '+ITEMS[item].n+'!');}
     }
-    if(tileChar(S.map,tx,ty)==='G'&&S.battle===null&&G.mode==='overworld')maybeWild();
+    if(tileChar(S.map,tx,ty)==='G'&&G.battle===null&&G.mode==='overworld')maybeWild();
     else checkApproach();
     const w=warpAt(tx,ty);
     if(w&&w.kind==='step')doWarp(w);
@@ -1639,7 +1644,7 @@ function maybeWild(){
   UI.battleOpen();
 }
 function checkApproach(){
-  const m=map();if(!m||!m.npcs||G.mode!=='overworld'||S.battle)return;
+  const m=map();if(!m||!m.npcs||G.mode!=='overworld'||G.battle)return;
   for(const n of m.npcs){
     const d=Math.abs(n.x-P.x)+Math.abs(n.y-P.y);
     if(n.trainer){
@@ -1729,7 +1734,7 @@ function doInteract(){
     if(npc.gate!==undefined&&S.badges.length<npc.gate+1){showMsg(npc.text[0]).then(()=>showMsg(npc.text[1]));return;}
     if(npc.id==='nurse'){S.lastCenter={map:S.map,x:P.x,y:P.y};healAll();showMsg('Seus monstros foram totalmente curados!').then(()=>saveGame());return;}
     if(npc.id==='clerk'){UI.shopOpen();return;}
-    if(npc.id==='prof'){if(!S.flags.starter)chooseStarter();else showMsg('Continue sua jornada, '+S.name+'!');return;}
+    if(npc.id==='prof'){if(!S.flags.starter)showMsg('O Professor entrega os monstros iniciais no começo da jornada.');else showMsg('Continue sua jornada, '+S.name+'!');return;}
     if(npc.text)showMsgLines(npc.text);
     return;
   }
@@ -2009,12 +2014,10 @@ async function afterActions(){
     if(m.leech&&m.hp>0){
       const other=side==='player'?om:pm;
       const d=Math.max(1,Math.floor(maxHp(m)/8));
-      if(other.hp>0&&other.leech){
-        m.hp=Math.max(0,m.hp-d);
-        other.hp=Math.min(maxHp(other),other.hp+d);
-        await battleMsg(SPECIES[m.id].n+' drenou energia de '+SPECIES[other.id].n+'!');
-        UI.battleRefresh();await wait(300);
-      }
+      m.hp=Math.max(0,m.hp-d);
+      if(other.hp>0)other.hp=Math.min(maxHp(other),other.hp+d);
+      await battleMsg('As sementes drenaram energia de '+SPECIES[m.id].n+'!');
+      UI.battleRefresh();await wait(300);
     }
   }
   if(om.hp<=0){await handleOppFaint();}
@@ -2185,7 +2188,7 @@ async function useItemInBattle(itemId){
   if(it.type==='candy'){
     const pm=pMon();
     if(pm.hp<=0){await battleMsg('Não dá para usar em um monstro desmaiado!');S.bag[itemId]++;return;}
-    pm.exp+=expToNext(pm.lv);
+    pm.exp+=expToNext(pm.lv);pm.lv++;
     await battleMsg(SPECIES[pm.id].n+' subiu de nível!');
     await levelUp(pm);await tryEvolve(pm);
     return;
@@ -2274,7 +2277,9 @@ async function endBattle(){
     await showMsg('O Centro Pokémon curou sua equipe.');
     return;
   }
-  if(S.flags.beat_champ&&S.badges.length===4){
+  if(S.flags.beat_champ&&S.badges.length===4&&!S.flags.hallShown){
+    S.flags.hallShown=true;
+    saveGame();
     G.mode='hall';
     UI.hallOpen();
     return;
@@ -2293,7 +2298,7 @@ uiRoot().addEventListener('click',e=>{
   if(UI.clickLock&&performance.now()<UI.clickLock){e.stopPropagation();e.preventDefault();}
 },{capture:true});
 function closeOverlays(){uiRoot().innerHTML='';UI.msgResolve=null;UI.onA=null;UI.onB=null;UI.keyNav=null;touchBar();}
-Input.bind('A',()=>{if(UI.onA){const f=UI.onA;UI.onA=null;f();}else if(UI.msgResolve){const f=UI.msgResolve;UI.msgResolve=null;f();}else if(G.mode==='overworld'){doInteract();}});
+Input.bind('A',()=>{if(UI.msgResolve){const f=UI.msgResolve;UI.msgResolve=null;f();}else if(UI.onA){const f=UI.onA;UI.onA=null;f();}else if(G.mode==='overworld'){doInteract();}});
 Input.bind('B',()=>{if(UI.onB){const f=UI.onB;UI.onB=null;f();}else if(UI.keyNav){}});
 Input.bind('M',()=>{if(G.mode==='overworld'&&!UI.msgResolve)UI.menuOpen();});
 
@@ -2409,8 +2414,16 @@ function titleOpen(){
   });};
   const pick=i=>{
     if(i===0){AudioSys.confirm();introStart();}
-    if(i===1&&hasSave()){AudioSys.confirm();loadGame();teleport(S.map,S.x,S.y,S.dir);showMsg('Bem-vindo de volta, '+S.name+'!');}
-    if(i===2&&hasSave()){clearSave();render();showToast('Save apagado.');}
+    if(i===1&&hasSave()){
+      AudioSys.confirm();closeOverlays();
+      if(!loadGame()){
+        clearSave();titleOpen();showToast('Save corrompido — apagado. Inicie um novo jogo.');
+        return;
+      }
+      teleport(S.map,S.x,S.y,S.dir);
+      showMsg('Bem-vindo de volta, '+S.name+'!');
+    }
+    if(i===2&&hasSave()){AudioSys.confirm();clearSave();titleOpen();showToast('Save apagado.');}
   };
   UI.keyNav=d=>{const n=typeof d==='string'?(d==='up'||d==='left'?-1:1):(d>0?1:-1);sel=Math.min(2,Math.max(0,sel+n));render();AudioSys.blip();};
   UI.onA=()=>pick(sel);
@@ -2642,7 +2655,7 @@ async function shopOpen(){
 }
 /* ---------- PC ---------- */
 async function pcOpen(){
-  const box=S.box||[];
+  S.box=S.box||[];const box=S.box;
   const loop=async()=>{
     const items=box.map((m,i)=>i);
     const idx=await listUI(items.length?items:['(PC vazio)'],{title:'PC DE BILL — '+items.length+' monstros',render:(i)=>{
@@ -2759,6 +2772,8 @@ function battleMsg(text,align){
   return new Promise(res=>{
     const seq=++bmsgSeq;
     box.classList.remove('hidden');
+    const grid=document.getElementById('bcmd');
+    if(grid)grid.classList.add('hidden');
     const t=box.querySelector('.btxt');if(!t)return showMsg(text,align);
     t.textContent='';
     const ar=box.querySelector('.barrow');if(ar)ar.style.display='none';
@@ -2768,7 +2783,7 @@ function battleMsg(text,align){
       i+=2;t.textContent=text.slice(0,i);
       if(i>=text.length){
         clearInterval(iv);ar.style.display='block';
-        UI.msgResolve=()=>{UI.msgResolve=null;UI.clickLock=performance.now()+300;box.classList.add('hidden');t.textContent='';ar.style.display='none';res();};
+        UI.msgResolve=()=>{UI.msgResolve=null;UI.clickLock=performance.now()+300;box.classList.add('hidden');t.textContent='';ar.style.display='none';if(grid)grid.classList.remove('hidden');res();};
       }
     },14);
   });
@@ -2910,6 +2925,7 @@ async function partyMenu(){
 function gridShow(opts){
   BUI.grid=opts;BUI.sel=0;
   const c=uiRoot().querySelector('#bcmd');if(!c)return;
+  c.classList.remove('hidden');
   c.innerHTML='';
   opts.forEach((o,i)=>{
     const d=el('div','opt'+(i===0?' sel':''));
