@@ -28,7 +28,8 @@
 - ✅ **Fase 0 — Fundação** (commit `0a5ba60`): git init, `.gitignore`, README.
 - ✅ **Fase 1 — Higiene** (commit `2ac4…`): stats unificadas, código morto removido, dados movidos antes do `boot()`, `reward` removido (recompensa vem de `CLS_MONEY`), `window.__game` atrás de `?debug`.
 - ✅ **Fase 2 — Bugs** (commit `2ac4…`): precisão do inimigo, level-up cura PS, mensagem do Doce Raro, `S.prev` pós-whiteout, e **bug crítico descoberto na verificação**: `burstFx` chamava o parâmetro `el` (um elemento DOM) como função — **toda batalha abortava no primeiro golpe com dano** ("A batalha travou: el is not a function"). Corrigido renomeando o parâmetro para `src`.
-- ⏳ Fases 3–6 pendentes (ver abaixo).
+- ✅ **Rodada de QA/simulação real** (protocolo `PROMPT_MESTRE_ORQUESTRACAO.md`, commits `b628dc1`, `e8546bd`, `9dc2620`, `cb3e7b1`, `bc53564`, `44a9ae2` — ver detalhes e evidências em `TEST-PLAN.md` e histórico completo em `PLANO_MELHORIAS_PROGRESSO.md`): 12 bugs encontrados jogando de verdade (encontros selvagens mortos, save de posição não persistindo, PC perdendo monstro depositado, mensagens de batalha bloqueadas pela grade de comandos, Hall da Fama reabrindo, etc.) + 2 bugs de layout encontrados por verificação com modelo de visão (título cortado/menu estourando, caixas de HP sobrepostas na batalha) — todos corrigidos e re-testados. **Isto não é a Fase 3 do plano abaixo** (que é sobre UX/features novas) — foi endurecimento do que já existia (Fases 0-2).
+- ⏳ Fases 3–6 (deste plano) pendentes (ver abaixo).
 
 ---
 

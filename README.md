@@ -27,7 +27,9 @@ Abra `index.html` em qualquer navegador (desktop ou mobile). O save é salvo aut
 ## Estrutura
 
 - `index.html` — jogo inteiro (motor, dados, UI, sprites, áudio)
-- `PLANO-MELHORIAS.md` — plano de melhorias por fases
+- `PLANO_MELHORIAS.md` — plano de melhorias por fases
+- `PLANO_MELHORIAS_PROGRESSO.md` — histórico do que já foi feito
+- `NÃO COMMITAR.md` — guia interno de comportamento e armadilhas conhecidas (não versionado)
 
 ## Créditos
 
