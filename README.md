@@ -5,6 +5,9 @@ Sem build, sem dependências, sem servidor, 100% offline.
 
 👉 **[Jogar no GitHub Pages](https://jonjonesbr.github.io/MonstroQuest/)**
 
+*(Se o link não responder na primeira visita, o GitHub pode levar alguns
+segundos para publicar o site.)*
+
 Inspirado no gênero de coleção de monstros, com identidade própria: as espécies,
 os golpes e as regras de status são do jogo.
 
