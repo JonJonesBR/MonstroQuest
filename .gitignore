@@ -5,7 +5,7 @@ Thumbs.db
 *.tmp
 
 # Documentação deliberadamente local (ver NÃO COMMITAR.md, seção Publicação).
-# A allowlist do remoto é: index.html, README.md, .gitignore.
+# A allowlist do remoto é: index.html, README.md, LICENSE, .gitignore.
 # NÃO use `git add -f` em nenhum destes.
 NÃO COMMITAR.md
 AGENTS.md
