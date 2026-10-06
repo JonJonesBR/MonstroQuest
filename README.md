@@ -71,3 +71,8 @@ Abra com `?debug` na URL para expor o objeto de desenvolvimento. No console:
 
 Projeto original no gênero de coleta e captura de monstros. Sem afiliação com
 Nintendo, Game Freak ou qualquer franquia.
+
+## Licença
+
+[MIT](LICENSE) — Copyright (c) 2026 JonJonesBR. Pode usar, copiar, modificar,
+publicar e vender, mantendo o aviso de copyright e esta permissão.
