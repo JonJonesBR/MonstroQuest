@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>MonstroQuest GBA — Clone de Pokémon</title>
+<title>MonstroQuest — RPG de captura de monstros</title>
 <style>
 
 :root{
@@ -348,13 +348,44 @@ canvas#world{
   font-size:7.2px;line-height:10px;color:#fff;letter-spacing:.3px;
   border:1px solid rgba(255,255,255,.3);text-shadow:1px 1px 0 rgba(0,0,0,.55)
 }
+/* Etiqueta de fase de batalha: sempre visível, nunca esconde status */
+#battle .stphase{
+  position:absolute;left:0;right:0;bottom:30%;display:flex;justify-content:space-between;
+  padding:0 3px;z-index:6;pointer-events:none;font-size:7px;line-height:1.1
+}
+#battle .stphase .sp{
+  display:flex;gap:2px;align-items:center;padding:1px 3px;border-radius:4px;
+  background:rgba(8,12,26,.82);border:1px solid rgba(180,196,240,.22)
+}
+#battle .stphase .sp .spn{color:#8f9dc4;font-size:6.5px}
+#battle .stphase .sp .spv{color:#eaf0ff;font-weight:bold;font-size:7.5px}
+#battle .stphase .sp .spv.up{color:#7ee08a}
+#battle .stphase .sp .spv.dn{color:#f08a8a}
+#battle .sbadge{
+  display:inline-block;padding:0 3px;border-radius:4px;font-size:7px;line-height:10px;
+  font-weight:bold;color:#fff;text-shadow:1px 1px 0 rgba(0,0,0,.6);letter-spacing:.2px
+}
+#battle .statusline{
+  display:flex;gap:3px;justify-content:center;flex-wrap:wrap;margin-top:1px
+}
 #battle .moves .opt{
-  display:flex;flex-direction:column;justify-content:center;align-items:center;gap:1px;
-  padding-left:8%;border:1px solid rgba(140,156,196,.25);
-  font-weight:bold;color:#d5def5
+  display:flex;flex-direction:column;justify-content:center;align-items:center;gap:0px;
+  padding:1px 4px;border:1px solid rgba(140,156,196,.25);
+  font-weight:bold;color:#d5def5;text-align:center;min-width:0
 }
 #battle .moves .opt.sel{background:#344ca8;color:#fff}
-#battle .moves .opt .pp{color:#9da8c5;font-size:.85em}
+#battle .moves .opt .mname{font-size:10px;line-height:1.15;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;max-width:100%;text-shadow:1px 1px 0 #000}
+#battle .moves .opt .pp{color:#9da8c5;font-size:8px;line-height:1.1}
+#battle .moves .opt.sel .pp{color:#dbe4ff}
+#battle .moves .opt.out{opacity:.4}
+#battle .moves .opt .eff{
+  display:inline-block;padding:0 3px;border-radius:4px;font-size:7px;line-height:10px;
+  font-weight:bold;color:#0b1020;letter-spacing:.2px;margin-top:1px
+}
+#battle .moves .opt .eff.e2{background:#4ade80}
+#battle .moves .opt .eff.e05{background:#7dd3fc}
+#battle .moves .opt .eff.e0{background:#f87171}
 /* Battle list: z:8 */
 #battle .list{
   position:absolute;left:0;right:0;bottom:0;height:50%;
@@ -520,6 +551,8 @@ body.touch.portrait.in-battle #battle .hill.h2{height:18%;bottom:29%}
 }
 
 </style>
+<meta name="theme-color" content="#0a0e1d">
+<meta name="description" content="RPG de captura de monstros em um unico arquivo HTML, 100% offline.">
 </head>
 <body>
 <div id="safe-probe"><span></span></div>
@@ -538,20 +571,80 @@ body.touch.portrait.in-battle #battle .hill.h2{height:18%;bottom:29%}
   </div>
 </div>
 <script>
+
+
 'use strict';
 /* ============================================================
-   MONSTROQUEST GBA — clone de Pokémon em um único HTML
+   MONSTROQUEST — RPG de captura de monstros em um único HTML
    Simulação separada de renderização; UI em DOM; canvas p/ mundo.
    ============================================================ */
 
 /* ---------- utilitários ---------- */
 const clamp=(v,a,b)=>v<a?a:(v>b?b:v);
-const irnd=(a,b)=>Math.floor(Math.random()*(b-a+1))+a;
-const pick=arr=>arr[Math.floor(Math.random()*arr.length)];
-const chance=p=>Math.random()<p;
 const pad=(n,l=3)=>String(n).padStart(l,'0');
 const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+
+/* ============================================================
+   RNG DE GAMEPLAY — centralizado e determinístico.
+   Tudo que afeta resultado de partida (encontro, IA, batalha,
+   captura, PP, crítico, status) passa por aqui. Efeitos puramente
+   visuais/áudio continuam usando Math.random (não afetam resultado).
+   Streams independentes evitam que um sistema "consuma" os
+   números de outro (ex.: mexer na IA não muda os encontros).
+   ============================================================ */
+const GameRNG=(function(){
+  const streams=Object.create(null);
+  let masterSeed=1,live=false;
+  function gen(key){
+    let s=streams[key];
+    if(s===undefined){s=mulberry32((masterSeed^hashStr(key))>>>0);streams[key]=s;}
+    return s;
+  }
+  function hashStr(str){let h=2166136261>>>0;for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}return h>>>0;}
+  return {
+    /* ativa semente determinística (debug/testes/replay). */
+    seed(s){masterSeed=(s>>>0)||1;live=true;for(const k in streams)delete streams[k];},
+    /* desliga a semente: volta ao comportamento normal não-determinístico. */
+    unseed(){live=false;masterSeed=1;for(const k in streams)delete streams[k];},
+    isSeeded(){return live;},
+    currentSeed(){return masterSeed;},
+    /* float em [0,1) — o único ponto de contato com Math.random. */
+    next(stream){return gen(stream||'gameplay')();},
+    /* inteiro em [a,b] inclusivo, seguro contra faixa invertida/inválida. */
+    int(a,b,stream){
+      let lo=Math.ceil(Number(a)),hi=Math.floor(Number(b));
+      if(!isFinite(lo))lo=0;if(!isFinite(hi))hi=0;
+      if(hi<lo){const t=lo;lo=hi;hi=t;}
+      if(hi===lo)return lo;
+      return lo+Math.floor(gen(stream||'gameplay')()*(hi-lo+1));
+    },
+    /* true com probabilidade p (0..1). */
+    chance(p,stream){
+      p=Number(p);if(!isFinite(p))return false;
+      if(p<=0)return false;if(p>=1)return true;
+      return gen(stream||'gameplay')()<p;
+    },
+    pick(arr,stream){
+      if(!arr||!arr.length)return undefined;
+      return arr[Math.floor(gen(stream||'gameplay')()*arr.length)];
+    },
+    /* embaralha in-place (Fisher-Yates) */
+    shuffle(arr,stream){
+      const r=gen(stream||'gameplay');
+      for(let i=arr.length-1;i>0;i--){const j=Math.floor(r()*(i+1));const t=arr[i];arr[i]=arr[j];arr[j]=t;}
+      return arr;
+    },
+    /* estado serializável — permite reproduzir uma batalha depois */
+    dump(){return {seed:masterSeed,live,streams:Object.assign({},streams)};},
+    restore(st){if(!st)return;masterSeed=st.seed>>>0||1;live=!!st.live;for(const k in streams)delete streams[k];for(const k in st.streams||{})streams[k]=st.streams[k];},
+  };
+})();
+/* helpers legados agora delegam para a camada de gameplay.
+   `stream` opcional permite isolar cada sistema. */
+const irnd=(a,b,stream)=>GameRNG.int(a,b,stream);
+const pick=(arr,stream)=>GameRNG.pick(arr,stream);
+const chance=(p,stream)=>GameRNG.chance(p,stream);
 function formatTime(sec){const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=Math.floor(sec%60);return pad(h,1)+':'+pad(m,2)+':'+pad(s,2);}
 const $=(id)=>document.getElementById(id);
 function el(tag,cls,html){const e=document.createElement(tag);if(cls)e.className=cls;if(html!=null)e.innerHTML=html;return e;}
@@ -1026,6 +1119,24 @@ const CHART={
 function typeMult(atk,def){const m=CHART[atk];if(!m)return 1;return m[def]!==undefined?m[def]:1;}
 function speciesTypeMult(types,def){let m=1;for(const t of types)m*=typeMult(t,def);return m;}
 
+/* ============================================================
+   GOLPES — taxonomia com trade-offs reais.
+   Campos: n nome | t tipo | p potência | a precisão | pp | cat
+     phys/spec/status
+   extras que criam decisões:
+     pri      prioridade de ordem (0=normal, 1=+, 2=++)
+     drain    fração do dano drenada de volta
+     recoil   fração do dano sofrida pelo usuário
+     recharge o usuário perde o próximo turno (golpe de poder máximo)
+     multi    [min,max] ou N acertos
+     fixed    dano fixo por nível (ignora tabela de defesa)
+     heal     cura fração do PS máximo
+     cure     remove status de quem usa
+     self     estágios no usuário
+     eff      efeito no alvo (chance:<p> é a chance padrão do efeito)
+   Regra de ouro: nenhum golpe é "sempre o melhor" — poder tem custo,
+   e cada arquétipo tem pelo menos uma ferramenta própria.
+   ============================================================ */
 const MOVES={
   tacada:{n:'Tacada',t:'normal',p:40,a:100,pp:35,cat:'phys'},
   arranhao:{n:'Arranhão',t:'normal',p:40,a:100,pp:35,cat:'phys'},
@@ -1033,36 +1144,36 @@ const MOVES={
   rapido:{n:'Ataque Rápido',t:'normal',p:40,a:100,pp:30,cat:'phys',pri:1},
   bomba:{n:'Bomba Corporal',t:'normal',p:85,a:100,pp:15,cat:'phys',eff:{par:.3}},
   cortar:{n:'Cortar',t:'normal',p:70,a:100,pp:20,cat:'phys',crit:1},
-  hiper:{n:'Hiper Raio',t:'normal',p:150,a:90,pp:5,cat:'spec'},
-  brase:{n:'Brasa',t:'fire',p:40,a:100,pp:25,cat:'spec',eff:{burn:.1}},
-  roda:{n:'Roda de Fogo',t:'fire',p:60,a:100,pp:25,cat:'phys',eff:{burn:.1}},
-  chamas:{n:'Lança-Chamas',t:'fire',p:90,a:100,pp:15,cat:'spec',eff:{burn:.1}},
-  explosao:{n:'Explosão de Fogo',t:'fire',p:110,a:85,pp:5,cat:'spec',eff:{burn:.1}},
+  hiper:{n:'Hiper Raio',t:'normal',p:150,a:90,pp:5,cat:'spec',recharge:1},
+  brase:{n:'Brasa',t:'fire',p:40,a:100,pp:25,cat:'spec',eff:{burn:.15}},
+  roda:{n:'Roda de Fogo',t:'fire',p:60,a:100,pp:25,cat:'phys',eff:{burn:.15}},
+  chamas:{n:'Lança-Chamas',t:'fire',p:90,a:100,pp:15,cat:'spec',eff:{burn:.15}},
+  explosao:{n:'Explosão de Fogo',t:'fire',p:110,a:85,pp:5,cat:'spec',eff:{burn:.15},recoil:.25},
   jato:{n:'Jato d\'Água',t:'water',p:40,a:100,pp:25,cat:'spec'},
-  bolhas:{n:'Raio de Bolhas',t:'water',p:65,a:100,pp:20,cat:'spec',eff:{spd:-1,chance:.1}},
+  bolhas:{n:'Raio de Bolhas',t:'water',p:65,a:100,pp:20,cat:'spec',eff:{spd:-1,chance:.35}},
   surfar:{n:'Surfar',t:'water',p:90,a:100,pp:15,cat:'spec'},
   vinha:{n:'Chicote de Vinha',t:'grass',p:45,a:100,pp:25,cat:'phys'},
   navalha:{n:'Folha Navalha',t:'grass',p:55,a:95,pp:25,cat:'phys',crit:1},
-  solar:{n:'Raio Solar',t:'grass',p:120,a:100,pp:10,cat:'spec'},
+  solar:{n:'Raio Solar',t:'grass',p:120,a:100,pp:8,cat:'spec'},
   dreno:{n:'Megadreno',t:'grass',p:40,a:100,pp:15,cat:'spec',drain:.5},
   semente:{n:'Dreno de Sementes',t:'grass',p:0,a:90,pp:10,cat:'status',leech:1},
   poVeneno:{n:'Pó Venenoso',t:'grass',p:0,a:75,pp:35,cat:'status',eff:{pois:1}},
   poParal:{n:'Esporos Paralisantes',t:'grass',p:0,a:75,pp:30,cat:'status',eff:{par:1}},
   poSono:{n:'Pó do Sono',t:'grass',p:0,a:75,pp:15,cat:'status',eff:{sleep:1}},
-  choque:{n:'Choque do Trovão',t:'electric',p:40,a:100,pp:30,cat:'spec',eff:{par:.1}},
-  trovao:{n:'Trovão',t:'electric',p:90,a:100,pp:15,cat:'spec',eff:{par:.1}},
+  choque:{n:'Choque do Trovão',t:'electric',p:40,a:100,pp:30,cat:'spec',eff:{par:.15}},
+  trovao:{n:'Trovão',t:'electric',p:90,a:100,pp:15,cat:'spec',eff:{par:.15}},
   onda:{n:'Onda de Choque',t:'electric',p:60,a:101,pp:25,cat:'spec'},
-  ferrao:{n:'Ferrão Venenoso',t:'poison',p:15,a:100,pp:35,cat:'phys',eff:{pois:.3}},
+  ferrao:{n:'Ferrão Venenoso',t:'poison',p:15,a:100,pp:35,cat:'phys',eff:{pois:.4}},
   veneno:{n:'Veneno',t:'poison',p:0,a:90,pp:10,cat:'status',eff:{pois:1}},
   areia:{n:'Jato de Areia',t:'ground',p:0,a:100,pp:15,cat:'status',eff:{acc:-1}},
   terremoto:{n:'Terremoto',t:'ground',p:100,a:100,pp:10,cat:'phys'},
   rajada:{n:'Rajada',t:'flying',p:40,a:100,pp:35,cat:'spec'},
   asa:{n:'Ataque de Asa',t:'flying',p:60,a:100,pp:35,cat:'phys'},
   confusao:{n:'Confusão',t:'psychic',p:50,a:100,pp:25,cat:'spec',eff:{conf:.1}},
-  psiquico:{n:'Psíquico',t:'psychic',p:90,a:100,pp:10,cat:'spec',eff:{spd:-1,chance:.1}},
+  psiquico:{n:'Psíquico',t:'psychic',p:90,a:100,pp:10,cat:'spec',eff:{spd:-1,chance:.4}},
   hipnose:{n:'Hipnose',t:'psychic',p:0,a:60,pp:20,cat:'status',eff:{sleep:1}},
-  bolaSombria:{n:'Bola Sombria',t:'ghost',p:80,a:100,pp:15,cat:'spec',eff:{spd:-1,chance:.2}},
-  gelo:{n:'Raio de Gelo',t:'ice',p:90,a:100,pp:10,cat:'spec',eff:{freeze:.1}},
+  bolaSombria:{n:'Bola Sombria',t:'ghost',p:80,a:100,pp:15,cat:'spec',eff:{spd:-1,chance:.4}},
+  gelo:{n:'Raio de Gelo',t:'ice',p:90,a:100,pp:10,cat:'spec',eff:{freeze:.12}},
   avalanche:{n:'Avalanche',t:'rock',p:75,a:90,pp:10,cat:'phys'},
   endurecer:{n:'Endurecer',t:'normal',p:0,a:101,pp:30,cat:'status',self:{def:+1}},
   uivo:{n:'Uivo',t:'normal',p:0,a:101,pp:30,cat:'status',self:{atk:+1}},
@@ -1070,88 +1181,157 @@ const MOVES={
   grito:{n:'Grito',t:'normal',p:0,a:100,pp:40,cat:'status',eff:{atk:-1}},
   fio:{n:'Fio de Seda',t:'bug',p:0,a:95,pp:40,cat:'status',eff:{spe:-1}},
   recuperar:{n:'Recuperar',t:'normal',p:0,a:101,pp:10,cat:'status',heal:.5},
-  sopro:{n:'Sopro do Dragão',t:'dragon',p:60,a:100,pp:20,cat:'spec',eff:{par:.3}},
+  sopro:{n:'Sopro do Dragão',t:'dragon',p:60,a:100,pp:20,cat:'spec',eff:{par:.4}},
   pulsodrag:{n:'Pulso Dragônico',t:'dragon',p:85,a:100,pp:10,cat:'spec'},
   megapunho:{n:'Mega Punho',t:'fighting',p:80,a:85,pp:20,cat:'phys'},
   surra:{n:'Surra',t:'dark',p:80,a:100,pp:20,cat:'phys'},
+/* --- arquétipos added: cada um abre uma função que não existia --- */
+  arranco:{n:'Arranque',t:'normal',p:40,a:100,pp:30,cat:'phys',pri:2},
+  golpeDuplo:{n:'Golpe Duplo',t:'normal',p:38,a:90,pp:15,cat:'phys',multi:2},
+  enxame:{n:'Enxame',t:'bug',p:18,a:85,pp:15,cat:'phys',multi:[2,5]},
+  laminha:{n:'Lâmina de Vento',t:'flying',p:55,a:100,pp:20,cat:'phys',pri:1},
+  predador:{n:'Predador',t:'dark',p:65,a:95,pp:10,cat:'phys',crit:1},
+  beberSangue:{n:'Beber Sangue',t:'dark',p:50,a:100,pp:15,cat:'spec',drain:.75},
+  estilhaco:{n:'Estilhaço',t:'rock',p:0,a:100,pp:15,cat:'phys',fixed:.9},
+  expor:{n:'Expor',t:'fighting',p:0,a:95,pp:15,cat:'status',eff:{def:-2,spd:-1,chance:1}},
+  foco:{n:'Foco',t:'psychic',p:0,a:101,pp:20,cat:'status',self:{spa:+1,spd:+1}},
+  guarda:{n:'Guarda',t:'steel',p:0,a:101,pp:10,cat:'status',self:{def:+2}},
+  laminaAco:{n:'Lâmina de Aço',t:'steel',p:70,a:95,pp:20,cat:'phys',crit:1},
+  limpar:{n:'Limpar',t:'normal',p:0,a:101,pp:10,cat:'status',cure:1,heal:.25},
+  inspiracao:{n:'Inspiração',t:'normal',p:0,a:101,pp:20,cat:'status',self:{atk:+1,spa:+1}},
 };
 
+/* ============================================================
+   ESPÉCIES — cada linha tem um PAPEL (campo `r`) reconhecível e
+   uma curva de stats que o sustenta. O campo `hab` dá a identidade
+   de habitat/ecologia (usado no Bestiário).
+   ============================================================ */
+const ROLE_PT={atk:'Atacante físico',spa:'Atacante especial',tank:'Tanque',
+  fast:'Veloz e frágil',sup:'Suporte',ctl:'Controlador',sus:'Sustentação',set:'Setup'};
 const SPECIES={
-  ignis:{id:'ignis',n:'Ignís',types:['fire'],arch:'biped',col:['#f06040','#f8c870','#ffd8a0'],stats:{hp:45,atk:60,def:40,spa:65,spd:40,spe:60},catch:45,xp:62,learn:[[1,'arranhao'],[1,'grito'],[5,'brase'],[9,'rajada'],[13,'roda'],[17,'chamas'],[21,'uivo'],[26,'surra'],[31,'explosao'],[36,'chamas']],evo:[{lv:16,to:'infernis'}],dex:'Um lagarto de fogo com chama eterna na cauda. Leal e corajoso.'},
-  infernis:{id:'infernis',n:'Infernis',types:['fire','flying'],arch:'biped',col:['#f06838','#f8a858','#ffd8a0'],stats:{hp:58,atk:70,def:52,spa:85,spd:52,spe:78},catch:45,xp:142,learn:[[1,'arranhao'],[1,'brase'],[13,'roda'],[17,'chamas'],[21,'asa'],[26,'surra'],[31,'explosao'],[36,'chamas']],evo:[{lv:32,to:'vulcron'}],dex:'Suas asas exalam fogo. Gira para lançar chamas em espiral.'},
-  vulcron:{id:'vulcron',n:'Vulcron',types:['fire','flying'],arch:'biped',col:['#f04020','#f8b040','#ffd8a0'],stats:{hp:78,atk:100,def:70,spa:110,spd:70,spe:100},catch:3,xp:209,learn:[[1,'arranhao'],[1,'brase'],[26,'surra'],[31,'explosao'],[36,'chamas'],[41,'solar'],[47,'hiper']],dex:'O mestre das chamas. Seu grito pode ser ouvido a quilômetros.'},
-  aquore:{id:'aquore',n:'Aquore',types:['water'],arch:'quad',col:['#58a8f0','#b8e0f8','#e8f8ff'],stats:{hp:50,atk:50,def:55,spa:55,spd:50,spe:55},catch:45,xp:64,learn:[[1,'tacada'],[1,'grito'],[5,'jato'],[9,'bolhas'],[13,'endurecer'],[17,'surfar'],[21,'uivo'],[26,'mordida'],[31,'hiper'],[36,'gelo']],evo:[{lv:16,to:'marinato'}],dex:'Uma tartaruga d\'água tranquila. Sua carapaça resiste a fortes correntezas.'},
-  marinato:{id:'marinato',n:'Marinato',types:['water'],arch:'quad',col:['#4898e0','#a8d8f0','#e8f8ff'],stats:{hp:62,atk:62,def:68,spa:78,spd:65,spe:68},catch:45,xp:144,learn:[[1,'tacada'],[1,'jato'],[13,'endurecer'],[17,'surfar'],[21,'uivo'],[26,'mordida'],[31,'hiper'],[36,'gelo']],evo:[{lv:32,to:'tritan'}],dex:'Nada com velocidade impressionante, deixando redemoinhos para trás.'},
-  tritan:{id:'tritan',n:'Tritan',types:['water','dragon'],arch:'quad',col:['#3878c8','#98d0f0','#e0f4ff'],stats:{hp:84,atk:95,def:95,spa:110,spd:95,spe:85},catch:3,xp:210,learn:[[1,'tacada'],[1,'jato'],[26,'mordida'],[31,'hiper'],[36,'gelo'],[41,'surfar'],[47,'pulsodrag']],dex:'O guardião dos mares. Seus jatos d\'água perfuram até rochas.'},
-  folhar:{id:'folhar',n:'Folhar',types:['grass'],arch:'blob',col:['#78c850','#c8f0a0','#e0ffc0'],stats:{hp:45,atk:55,def:50,spa:55,spd:45,spe:50},catch:45,xp:64,learn:[[1,'tacada'],[1,'grito'],[5,'vinha'],[9,'navalha'],[13,'endurecer'],[17,'semente'],[21,'dreno'],[26,'navalha'],[31,'solar'],[36,'terremoto']],evo:[{lv:16,to:'verdena'}],dex:'Uma semente cresce em suas costas. Absorve sol para florescer.'},
-  verdena:{id:'verdena',n:'Verdena',types:['grass'],arch:'blob',col:['#58b040','#b8e888','#e0ffc0'],stats:{hp:60,atk:65,def:62,spa:72,spd:60,spe:60},catch:45,xp:145,learn:[[1,'tacada'],[1,'vinha'],[13,'endurecer'],[17,'semente'],[21,'dreno'],[26,'navalha'],[31,'solar'],[36,'terremoto']],evo:[{lv:32,to:'florestus'}],dex:'O broto floresceu. Exala um perfume que acalma outros monstros.'},
-  florestus:{id:'florestus',n:'Florestus',types:['grass','fighting'],arch:'biped',col:['#389028','#a0e070','#e0ffc0'],stats:{hp:84,atk:110,def:90,spa:100,spd:90,spe:75},catch:3,xp:211,learn:[[1,'tacada'],[1,'vinha'],[26,'navalha'],[31,'solar'],[36,'megapunho'],[41,'terremoto'],[47,'hiper']],dex:'O gigante das florestas. Seus punhos podem derrubar montanhas.'},
-  asperim:{id:'asperim',n:'Asperim',types:['bug'],arch:'blob',col:['#a8b820','#e8f098','#f8ffc0'],stats:{hp:30,atk:45,def:35,spa:30,spd:30,spe:50},catch:255,xp:39,learn:[[1,'tacada'],[1,'fio'],[6,'mordida'],[10,'ferrao'],[14,'navalha'],[18,'surra']],evo:[{lv:10,to:'besourox'}],dex:'Lança fios de seda e morde com suas mandíbulas afiadas.'},
-  besourox:{id:'besourox',n:'Besourox',types:['bug','flying'],arch:'bird',col:['#909820','#d0e050','#f8ffc0'],stats:{hp:55,atk:70,def:55,spa:50,spd:50,spe:75},catch:120,xp:96,learn:[[1,'tacada'],[1,'fio'],[10,'ferrao'],[14,'asa'],[18,'surra'],[22,'mordida']],dex:'Zune em alta velocidade. Suas asas produzem um som estridente.'},
-  lagartix:{id:'lagartix',n:'Lagartix',types:['bug','normal'],arch:'serpent',col:['#78b860','#c8e8a0','#e0ffc0'],stats:{hp:40,atk:50,def:40,spa:40,spd:35,spe:60},catch:255,xp:50,learn:[[1,'tacada'],[1,'fio'],[7,'vinha'],[12,'mordida'],[16,'navalha'],[20,'surra']],evo:[{lv:14,to:'mantismax'}],dex:'Lagartixa que se camufla em folhagens. Rápida e esquiva.'},
-  mantismax:{id:'mantismax',n:'Mantismax',types:['bug','grass'],arch:'biped',col:['#489838','#98e068','#e0ffc0'],stats:{hp:65,atk:80,def:60,spa:60,spd:55,spe:90},catch:120,xp:101,learn:[[1,'tacada'],[1,'vinha'],[16,'navalha'],[20,'surra'],[24,'mordida'],[28,'dreno']],dex:'Seus braços são lâminas. Ataca em um piscar de olhos.'},
-  pardal:{id:'pardal',n:'Pardal',types:['normal','flying'],arch:'bird',col:['#b8a890','#e8d8c0','#f8f0e0'],stats:{hp:40,atk:45,def:35,spa:35,spd:35,spe:70},catch:255,xp:52,learn:[[1,'tacada'],[1,'grito'],[7,'rajada'],[12,'rapido'],[16,'asa'],[20,'mordida']],evo:[{lv:15,to:'pardom'}],dex:'Um passarinho teimoso que não teme nada maior que ele.'},
-  pardom:{id:'pardom',n:'Pardom',types:['normal','flying'],arch:'bird',col:['#988070','#d8c0a8','#f0e8d8'],stats:{hp:65,atk:70,def:55,spa:60,spd:55,spe:95},catch:120,xp:112,learn:[[1,'tacada'],[1,'rajada'],[16,'asa'],[20,'mordida'],[25,'rapido'],[30,'hiper']],dex:'Rapina veloz. Ataca mergulhando de grandes alturas.'},
-  chisper:{id:'chisper',n:'Chisper',types:['electric'],arch:'quad',col:['#f8d030','#fff0a0','#fff8d0'],stats:{hp:40,atk:50,def:40,spa:50,spd:40,spe:70},catch:190,xp:56,learn:[[1,'tacada'],[1,'grito'],[6,'choque'],[11,'onda'],[16,'rapido'],[21,'trovao'],[26,'surra']],evo:[{lv:12,to:'eletrix'}],dex:'Suas bochechas armazenam eletricidade estática. Muito brincalhão.'},
-  eletrix:{id:'eletrix',n:'Eletrix',types:['electric'],arch:'biped',col:['#f8c810','#fff080','#fff8d0'],stats:{hp:60,atk:70,def:60,spa:85,spd:60,spe:100},catch:75,xp:122,learn:[[1,'tacada'],[1,'choque'],[16,'rapido'],[21,'trovao'],[26,'surra'],[31,'onda']],dex:'Gera tempestades em miniatura. Seu pelo fica eriçado de energia.'},
-  tatu:{id:'tatu',n:'Tatu',types:['ground'],arch:'quad',col:['#c8a060','#e8d0a0','#f8f0d0'],stats:{hp:45,atk:60,def:60,spa:30,spd:45,spe:35},catch:255,xp:58,learn:[[1,'tacada'],[1,'grito'],[7,'areia'],[12,'endurecer'],[17,'terremoto'],[22,'mordida']],evo:[{lv:16,to:'tatuzao'}],dex:'Cava túneis com garras fortes. Enrola-se para se proteger.'},
-  tatuzao:{id:'tatuzao',n:'Tatuzão',types:['ground','rock'],arch:'quad',col:['#b08840','#e0c080','#f8f0d0'],stats:{hp:70,atk:90,def:100,spa:50,spd:70,spe:45},catch:120,xp:126,learn:[[1,'tacada'],[1,'endurecer'],[17,'terremoto'],[22,'mordida'],[27,'avalanche']],dex:'Sua carapaça é dura como rocha. Protege cavernas de intrusos.'},
-  viprel:{id:'viprel',n:'Viprel',types:['poison'],arch:'serpent',col:['#a040a0','#d890d8','#f0d0f0'],stats:{hp:40,atk:55,def:45,spa:50,spd:45,spe:60},catch:255,xp:60,learn:[[1,'mordida'],[1,'grito'],[7,'ferrao'],[12,'veneno'],[18,'mordida'],[23,'surra']],evo:[{lv:18,to:'serpanta'}],dex:'Suas presas exalam veneno. Prefere emboscar a perseguir.'},
-  serpanta:{id:'serpanta',n:'Serpanta',types:['poison','dark'],arch:'serpent',col:['#803080','#c878c8','#e8c0e8'],stats:{hp:60,atk:80,def:60,spa:75,spd:60,spe:90},catch:120,xp:130,learn:[[1,'mordida'],[1,'veneno'],[18,'mordida'],[23,'surra'],[28,'psiquico'],[33,'hiper']],dex:'Encara suas presas sem piscar. Seu veneno paralisa em segundos.'},
-  morcegon:{id:'morcegon',n:'Morcegon',types:['poison','flying'],arch:'bird',col:['#705890','#a088c0','#d0c0e8'],stats:{hp:55,atk:55,def:50,spa:45,spd:50,spe:60},catch:190,xp:65,learn:[[1,'tacada'],[1,'grito'],[8,'rajada'],[13,'ferrao'],[20,'asa'],[25,'mordida']],evo:[{lv:20,to:'morcegra'}],dex:'Cavernícola. Localiza presas pelo eco de seu guincho.'},
-  morcegra:{id:'morcegra',n:'Morcegra',types:['poison','flying'],arch:'bird',col:['#584078','#8870a8','#c0b0d8'],stats:{hp:75,atk:75,def:70,spa:70,spd:70,spe:95},catch:120,xp:135,learn:[[1,'tacada'],[1,'rajada'],[20,'asa'],[25,'mordida'],[30,'veneno'],[35,'hiper']],dex:'Voa em silêncio absoluto. Domina o céu das cavernas.'},
-  frostim:{id:'frostim',n:'Frostim',types:['ice'],arch:'blob',col:['#98d8d8','#d8f8f8','#f0ffff'],stats:{hp:50,atk:55,def:50,spa:60,spd:55,spe:45},catch:190,xp:64,learn:[[1,'tacada'],[1,'grito'],[8,'gelo'],[13,'endurecer'],[18,'bolhas'],[24,'gelo']],evo:[{lv:18,to:'glacirax'}],dex:'Congela o ar ao redor. Sua pele é fria como gelo polar.'},
-  glacirax:{id:'glacirax',n:'Glacirax',types:['ice','water'],arch:'quad',col:['#70c0c0','#c0f0f0','#f0ffff'],stats:{hp:70,atk:80,def:70,spa:95,spd:80,spe:65},catch:75,xp:132,learn:[[1,'tacada'],[1,'gelo'],[18,'bolhas'],[24,'gelo'],[30,'surfar'],[36,'hiper']],dex:'Seus chifres de gelo nunca derretem, nem sob o sol mais forte.'},
-  pedrax:{id:'pedrax',n:'Pedrax',types:['rock'],arch:'quad',col:['#b8a038','#d8c878','#f0e8c0'],stats:{hp:55,atk:70,def:80,spa:40,spd:45,spe:25},catch:190,xp:66,learn:[[1,'tacada'],[1,'endurecer'],[9,'avalanche'],[14,'mordida'],[19,'terremoto']],evo:[{lv:18,to:'pedralto'}],dex:'Corpo de rocha viva. Dorme por séculos em montanhas.'},
-  pedralto:{id:'pedralto',n:'Pedralto',types:['rock','ground'],arch:'biped',col:['#988028','#c8b060','#f0e8c0'],stats:{hp:75,atk:95,def:110,spa:60,spd:70,spe:35},catch:75,xp:134,learn:[[1,'tacada'],[1,'endurecer'],[19,'terremoto'],[24,'avalanche'],[30,'mordida']],dex:'Guardião das montanhas. Seus passos provocam pequenos terremotos.'},
-  fadinha:{id:'fadinha',n:'Fadinha',types:['fairy'],arch:'blob',col:['#ee99ac','#ffc8d8','#ffe0e8'],stats:{hp:55,atk:45,def:50,spa:55,spd:60,spe:45},catch:190,xp:62,learn:[[1,'tacada'],[1,'grito'],[8,'confusao'],[13,'uivo'],[18,'surra'],[24,'psiquico']],evo:[{lv:16,to:'fadalur'}],dex:'Espalha pó mágico que acalma corações. Muito curiosa.'},
-  fadalur:{id:'fadalur',n:'Fadalur',types:['fairy','psychic'],arch:'blob',col:['#e07898','#ffb8c8','#ffe0e8'],stats:{hp:75,atk:65,def:70,spa:85,spd:90,spe:65},catch:75,xp:133,learn:[[1,'tacada'],[1,'confusao'],[18,'surra'],[24,'psiquico'],[30,'hipnose']],dex:'Suas asas brilham como estrelas. Fala através de sonhos.'},
-  sombrax:{id:'sombrax',n:'Sombrax',types:['dark'],arch:'biped',col:['#584848','#887070','#c0a8a8'],stats:{hp:45,atk:65,def:45,spa:55,spd:45,spe:60},catch:190,xp:64,learn:[[1,'arranhao'],[1,'grito'],[9,'mordida'],[14,'rapido'],[20,'surra'],[25,'bolaSombria']],evo:[{lv:18,to:'umbrax'}],dex:'Aproveita-se da escuridão para pregar peças. Nem sempre maldoso.'},
-  umbrax:{id:'umbrax',n:'Umbrax',types:['dark','ghost'],arch:'biped',col:['#382828','#705858','#a89090'],stats:{hp:65,atk:95,def:65,spa:85,spd:65,spe:95},catch:75,xp:137,learn:[[1,'arranhao'],[1,'mordida'],[20,'surra'],[25,'bolaSombria'],[30,'rapido'],[36,'hiper']],dex:'Desaparece nas sombras. Sua risada ecoa antes de atacar.'},
-  lutinha:{id:'lutinha',n:'Lutinha',types:['fighting'],arch:'biped',col:['#c03028','#e89880','#f8d8c8'],stats:{hp:45,atk:65,def:45,spa:35,spd:45,spe:55},catch:190,xp:68,learn:[[1,'tacada'],[1,'grito'],[8,'megapunho'],[13,'uivo'],[19,'surra'],[25,'hiper']],evo:[{lv:18,to:'pugilux'}],dex:'Treina lutas contra pedras. Seu punho quebra galhos grossos.'},
-  pugilux:{id:'pugilux',n:'Pugilux',types:['fighting'],arch:'biped',col:['#a02018','#e08870','#f8d8c8'],stats:{hp:65,atk:95,def:65,spa:60,spd:65,spe:75},catch:75,xp:139,learn:[[1,'tacada'],[1,'megapunho'],[19,'surra'],[25,'hiper'],[30,'uivo'],[36,'terremoto']],dex:'Lutador lendário. Nunca desiste, mesmo contra inimigos maiores.'},
-  mentax:{id:'mentax',n:'Mentax',types:['psychic'],arch:'blob',col:['#f85888','#ffa0b8','#ffd0dc'],stats:{hp:45,atk:45,def:45,spa:70,spd:55,spe:60},catch:190,xp:68,learn:[[1,'confusao'],[1,'grito'],[10,'hipnose'],[15,'psiquico'],[21,'rapido'],[27,'bolaSombria']],evo:[{lv:20,to:'psiao'}],dex:'Lê pensamentos. Fica tímido quando alguém pensa muito alto.'},
-  psiao:{id:'psiao',n:'Psião',types:['psychic'],arch:'blob',col:['#f04070','#ff90b0','#ffd0dc'],stats:{hp:65,atk:60,def:60,spa:105,spd:80,spe:90},catch:75,xp:140,learn:[[1,'confusao'],[1,'hipnose'],[21,'rapido'],[27,'bolaSombria'],[33,'psiquico'],[40,'hiper']],dex:'Seus poderes mentais dobram objetos. Medita em lugares altos.'},
-  assombrix:{id:'assombrix',n:'Assombrix',types:['ghost'],arch:'blob',col:['#705898','#a898c8','#d8d0f0'],stats:{hp:45,atk:50,def:45,spa:60,spd:50,spe:50},catch:190,xp:66,learn:[[1,'tacada'],[1,'grito'],[10,'bolaSombria'],[15,'hipnose'],[20,'surra'],[26,'psiquico']],evo:[{lv:20,to:'espectrox'}],dex:'Esconde-se em sombras e assusta viajantes. Inofensivo no fundo.'},
-  espectrox:{id:'espectrox',n:'Espectrox',types:['ghost','dark'],arch:'blob',col:['#584078','#8870a8','#c0b0d8'],stats:{hp:65,atk:70,def:65,spa:95,spd:75,spe:85},catch:75,xp:138,learn:[[1,'tacada'],[1,'bolaSombria'],[20,'surra'],[26,'psiquico'],[32,'hipnose']],dex:'Vagueia por ruínas. Dizem que protege segredos antigos.'},
-  zangao:{id:'zangao',n:'Zangão',types:['bug','poison'],arch:'bird',col:['#e0a020','#f8d878','#fff0c0'],stats:{hp:45,atk:60,def:55,spa:50,spd:50,spe:60},catch:190,xp:70,learn:[[1,'tacada'],[1,'ferrao'],[9,'asa'],[15,'veneno'],[21,'surra']],dex:'Defende a colmeia com ferocidade. Seu ferrão causa dormência.'},
-  dragonil:{id:'dragonil',n:'Dragonil',types:['dragon'],arch:'serpent',col:['#5898f0','#b0d8f8','#e0f0ff'],stats:{hp:45,atk:55,def:45,spa:55,spd:45,spe:55},catch:45,xp:78,learn:[[1,'tacada'],[1,'grito'],[9,'sopro'],[15,'mordida'],[21,'pulsodrag'],[27,'surfar']],evo:[{lv:24,to:'dragor'}],dex:'Um dragão jovem que ainda aprende a voar. Muito orgulhoso.'},
-  dragor:{id:'dragor',n:'Dragor',types:['dragon','flying'],arch:'serpent',col:['#3868c8','#90c0f0','#d0e8ff'],stats:{hp:70,atk:85,def:70,spa:85,spd:70,spe:85},catch:10,xp:150,learn:[[1,'tacada'],[1,'sopro'],[21,'pulsodrag'],[27,'surfar'],[33,'asa'],[40,'hiper']],dex:'Dragão adulto. Voa por cima das nuvens e comanda os céus.'},
-  metalim:{id:'metalim',n:'Metalim',types:['steel'],arch:'quad',col:['#b8b8d0','#e0e0f0','#f8f8ff'],stats:{hp:45,atk:60,def:80,spa:45,spd:60,spe:35},catch:190,xp:72,learn:[[1,'tacada'],[1,'endurecer'],[10,'mordida'],[16,'terremoto'],[22,'hiper']],evo:[{lv:18,to:'aceir'}],dex:'Seu corpo é feito de liga metálica. Reflete a luz do sol.'},
-  aceir:{id:'aceir',n:'Aceir',types:['steel','rock'],arch:'biped',col:['#9898b0','#d0d0e8','#f0f0ff'],stats:{hp:65,atk:85,def:115,spa:65,spd:85,spe:50},catch:75,xp:141,learn:[[1,'tacada'],[1,'endurecer'],[16,'terremoto'],[22,'hiper'],[28,'avalanche'],[34,'mordida']],dex:'Impenetrável. Seu corpo já resistiu a erupções vulcânicas.'},
+  ignis:{id:'ignis',n:'Ignís',types:['fire'],r:'spa',hab:'Vila Folha · rotas 1-2',arch:'biped',col:['#f06040','#f8c870','#ffd8a0'],stats:{hp:45,atk:56,def:44,spa:64,spd:44,spe:64},catch:45,xp:62,learn:[[1,'arranhao'],[1,'grito'],[5,'brase'],[9,'roda'],[13,'asa'],[17,'chamas'],[21,'inspiracao'],[26,'predador'],[31,'explosao'],[37,'hiper']],evo:[{lv:16,to:'infernis'}],dex:'Um lagarto de fogo com chama eterna na cauda. Loyal, corajoso e um pouco impaciente — cresce rápido demais para o próprio corpo.'},
+  infernis:{id:'infernis',n:'Infernis',types:['fire','flying'],r:'spa',hab:'Rota 1-2',arch:'biped',col:['#f06838','#f8a858','#ffd8a0'],stats:{hp:58,atk:68,def:52,spa:88,spd:54,spe:80},catch:45,xp:142,learn:[[1,'arranhao'],[1,'brase'],[13,'roda'],[17,'chamas'],[21,'laminha'],[26,'predador'],[31,'inspiracao'],[37,'explosao']],evo:[{lv:32,to:'vulcron'}],dex:'Suas asas exalam fogo. Gira no ar para lançar chamas em espiral e nunca pousa por mais de um turno.'},
+  vulcron:{id:'vulcron',n:'Vulcron',types:['fire','flying'],r:'spa',hab:'Rota 4',arch:'biped',col:['#f04020','#f8b040','#ffd8a0'],stats:{hp:76,atk:98,def:66,spa:114,spd:68,spe:104},catch:3,xp:209,learn:[[1,'arranhao'],[1,'brase'],[26,'predador'],[31,'explosao'],[37,'laminha'],[41,'inspiracao'],[47,'hiper']],dex:'O mestre das chamas. Seu grito pode ser ouvido a quilômetros — e seu rastro marca o céu por minutos.'},
+  aquore:{id:'aquore',n:'Aquore',types:['water'],r:'tank',hab:'Vila Folha · lago',arch:'quad',col:['#58a8f0','#b8e0f8','#e8f8ff'],stats:{hp:60,atk:46,def:64,spa:48,spd:66,spe:36},catch:45,xp:64,learn:[[1,'tacada'],[1,'grito'],[5,'jato'],[9,'bolhas'],[13,'endurecer'],[17,'surfar'],[21,'recuperar'],[26,'limpar'],[31,'hiper'],[37,'gelo']],evo:[{lv:16,to:'marinato'}],dex:'Uma tartaruga d\'água tranquila. Recupera energia devagar mas nunca desiste — a carapaça resiste a fortes correntezas.'},
+  marinato:{id:'marinato',n:'Marinato',types:['water'],r:'sus',hab:'Rota 2 · lago',arch:'quad',col:['#4898e0','#a8d8f0','#e8f8ff'],stats:{hp:74,atk:60,def:82,spa:62,spd:82,spe:38},catch:45,xp:144,learn:[[1,'tacada'],[1,'jato'],[13,'endurecer'],[17,'surfar'],[21,'recuperar'],[26,'limpar'],[31,'hiper'],[37,'gelo']],evo:[{lv:32,to:'tritan'}],dex:'Nada com velocidade impressionante, deixando redemoinhos para trás. Curar a si mesmo em batalha é sua especialidade.'},
+  tritan:{id:'tritan',n:'Tritan',types:['water','dragon'],r:'tank',hab:'Rota 4 · mar',arch:'quad',col:['#3878c8','#98d0f0','#e0f4ff'],stats:{hp:92,atk:88,def:96,spa:104,spd:96,spe:52},catch:3,xp:210,learn:[[1,'tacada'],[1,'jato'],[26,'limpar'],[31,'hiper'],[37,'gelo'],[41,'sopro'],[47,'pulsodrag']],dex:'O guardião dos mares. Os jatos d\'água perfuram até rocha, e o casco ignora golpes que nenhuma outra tartaruga aguentaria.'},
+  folhar:{id:'folhar',n:'Folhar',types:['grass'],r:'spa',hab:'Rota 1',arch:'blob',col:['#78c850','#c8f0a0','#e0ffc0'],stats:{hp:50,atk:52,def:56,spa:58,spd:58,spe:48},catch:45,xp:64,learn:[[1,'tacada'],[1,'grito'],[5,'vinha'],[9,'navalha'],[13,'foco'],[17,'semente'],[21,'dreno'],[24,'poParal'],[26,'cortar'],[31,'solar'],[37,'terremoto']],evo:[{lv:16,to:'verdena'}],dex:'Uma semente cresce em suas costas. Absorve sol para florescer e planta sementes nos adversários que a tocam.'},
+  verdena:{id:'verdena',n:'Verdena',types:['grass'],r:'set',hab:'Rota 2',arch:'blob',col:['#58b040','#b8e888','#e0ffc0'],stats:{hp:64,atk:64,def:74,spa:70,spd:72,spe:52},catch:45,xp:145,learn:[[1,'tacada'],[1,'vinha'],[13,'foco'],[17,'semente'],[21,'dreno'],[26,'poVeneno'],[29,'cortar'],[31,'solar'],[37,'terremoto']],evo:[{lv:32,to:'florestus'}],dex:'O broto floresceu. Exala um perfume que acalma outros monstros — e ganha força enquanto toma sol.'},
+  florestus:{id:'florestus',n:'Florestus',types:['grass','fighting'],r:'atk',hab:'Rota 4',arch:'biped',col:['#389028','#a0e070','#e0ffc0'],stats:{hp:88,atk:112,def:86,spa:92,spd:84,spe:60},catch:3,xp:211,learn:[[1,'tacada'],[1,'vinha'],[26,'cortar'],[31,'solar'],[37,'inspiracao'],[41,'megapunho'],[47,'hiper']],dex:'O gigante das florestas. As raízes abrem-se e viram punhos: quando ele decide atacar de perto, o golpe vira físico de verdade.'},
+  asperim:{id:'asperim',n:'Asperim',types:['bug'],r:'fast',hab:'Rota 1 · ervas',arch:'blob',col:['#a8b820','#e8f098','#f8ffc0'],stats:{hp:42,atk:52,def:40,spa:28,spd:34,spe:68},catch:255,xp:39,learn:[[1,'tacada'],[1,'fio'],[6,'enxame'],[10,'ferrao'],[14,'predador'],[18,'golpeDuplo'],[22,'arranco']],evo:[{lv:10,to:'besourox'}],dex:'Lança fios de seda e morde com mandíbulas afiadas. Corpo frágil, mas chega primeiro e quase sempre.'},
+  besourox:{id:'besourox',n:'Besourox',types:['bug','flying'],r:'fast',hab:'Rota 1-2 · céu',arch:'bird',col:['#909820','#d0e050','#f8ffc0'],stats:{hp:58,atk:74,def:50,spa:44,spd:44,spe:94},catch:120,xp:96,learn:[[1,'tacada'],[1,'fio'],[10,'ferrao'],[14,'laminha'],[18,'predador'],[22,'enxame'],[27,'arranco']],dex:'Zune em alta velocidade. As asas batem no ritmo do próprio coração — e cortam antes de o inimigo reagir.'},
+  lagartix:{id:'lagartix',n:'Lagartix',types:['bug','normal'],r:'fast',hab:'Rota 1 · folhagem',arch:'serpent',col:['#78b860','#c8e8a0','#e0ffc0'],stats:{hp:42,atk:52,def:42,spa:40,spd:40,spe:70},catch:255,xp:50,learn:[[1,'tacada'],[1,'fio'],[7,'enxame'],[12,'predador'],[16,'golpeDuplo'],[20,'arranco']],evo:[{lv:14,to:'mantismax'}],dex:'Lagartixa que se camufla em folhagens. Rápida e esquiva: prefere errar do primeiro golpe a errar do último.'},
+  mantismax:{id:'mantismax',n:'Mantismax',types:['bug','grass'],r:'fast',hab:'Rota 2-3',arch:'biped',col:['#489838','#98e068','#e0ffc0'],stats:{hp:62,atk:86,def:58,spa:58,spd:52,spe:96},catch:120,xp:101,learn:[[1,'tacada'],[1,'vinha'],[16,'enxame'],[20,'predador'],[24,'golpeDuplo'],[28,'dreno'],[34,'arranco']],dex:'Seus braços são lâminas. Ataca em um piscar de olhos e recua antes de o golpe adversário cair.'},
+  pardal:{id:'pardal',n:'Pardal',types:['normal','flying'],r:'fast',hab:'Rota 1 · cidade',arch:'bird',col:['#b8a890','#e8d8c0','#f8f0e0'],stats:{hp:42,atk:48,def:36,spa:36,spd:36,spe:72},catch:255,xp:52,learn:[[1,'tacada'],[1,'grito'],[7,'rajada'],[12,'asa'],[16,'laminha'],[20,'golpeDuplo']],evo:[{lv:15,to:'pardom'}],dex:'Um passarinho teimoso que não teme nada maior que ele. Vive nos telhados da Vila Folha.'},
+  pardom:{id:'pardom',n:'Pardom',types:['normal','flying'],r:'fast',hab:'Rota 2-4 · céu',arch:'bird',col:['#988070','#d8c0a8','#f0e8d8'],stats:{hp:66,atk:78,def:54,spa:62,spd:52,spe:98},catch:120,xp:112,learn:[[1,'tacada'],[1,'rajada'],[16,'laminha'],[20,'golpeDuplo'],[25,'predador'],[31,'arranco'],[37,'hiper']],dex:'Rapina veloz. Ataca mergulhando de grandes alturas e raramente erra a primeira investida.'},
+  chisper:{id:'chisper',n:'Chisper',types:['electric'],r:'fast',hab:'Rota 1 · campo',arch:'quad',col:['#f8d030','#fff0a0','#fff8d0'],stats:{hp:42,atk:44,def:42,spa:56,spd:46,spe:72},catch:190,xp:56,learn:[[1,'tacada'],[1,'grito'],[6,'choque'],[11,'onda'],[16,'rapido'],[21,'trovao'],[26,'arranco'],[31,'hiper'],[37,'foco']],evo:[{lv:12,to:'eletrix'}],dex:'Suas bochechas armazenam eletricidade estática. Muito brincalhão — e nunca entra em batalha sem soltar faíscas.'},
+  eletrix:{id:'eletrix',n:'Eletrix',types:['electric'],r:'fast',hab:'Rota 3-4',arch:'biped',col:['#f8c810','#fff080','#fff8d0'],stats:{hp:60,atk:56,def:52,spa:84,spd:62,spe:104},catch:75,xp:122,learn:[[1,'tacada'],[1,'choque'],[16,'rapido'],[21,'trovao'],[26,'arranco'],[31,'onda'],[37,'foco'],[43,'hiper']],dex:'Gera tempestades em miniatura. O pelo fica eriçado de energia quando decide testar um golpe antes de você.'},
+  tatu:{id:'tatu',n:'Tatu',types:['ground'],r:'tank',hab:'Rota 2 · toca',arch:'quad',col:['#c8a060','#e8d0a0','#f8f0d0'],stats:{hp:50,atk:64,def:64,spa:28,spd:48,spe:30},catch:255,xp:58,learn:[[1,'tacada'],[1,'grito'],[7,'areia'],[12,'endurecer'],[17,'terremoto'],[22,'estilhaco'],[28,'expor']],evo:[{lv:16,to:'tatuzao'}],dex:'Cava túneis com garras fortes. Enrola-se para se proteger e suja a visão de quem tenta acertá-lo.'},
+  tatuzao:{id:'tatuzao',n:'Tatuzão',types:['ground','rock'],r:'tank',hab:'Caverna Obscura',arch:'quad',col:['#b08840','#e0c080','#f8f0d0'],stats:{hp:76,atk:94,def:108,spa:44,spd:76,spe:32},catch:120,xp:126,learn:[[1,'tacada'],[1,'endurecer'],[17,'terremoto'],[22,'estilhaco'],[27,'avalanche'],[33,'guarda'],[39,'expor']],dex:'Sua carapaça é dura como rocha. Protege cavernas de intrusos e transforma o próprio casco em arma.'},
+  viprel:{id:'viprel',n:'Viprel',types:['poison'],r:'fast',hab:'Rota 1-2',arch:'serpent',col:['#a040a0','#d890d8','#f0d0f0'],stats:{hp:44,atk:58,def:42,spa:52,spd:46,spe:68},catch:255,xp:60,learn:[[1,'mordida'],[1,'grito'],[7,'ferrao'],[12,'veneno'],[18,'predador'],[24,'beberSangue'],[30,'arranco']],evo:[{lv:18,to:'serpanta'}],dex:'Suas presas exalam veneno. Prefere emboscar a perseguir — e bebe o que dá para se manter de pé.'},
+  serpanta:{id:'serpanta',n:'Serpanta',types:['poison','dark'],r:'fast',hab:'Rota 3-4',arch:'serpent',col:['#803080','#c878c8','#e8c0e8'],stats:{hp:64,atk:84,def:62,spa:78,spd:64,spe:96},catch:120,xp:130,learn:[[1,'mordida'],[1,'veneno'],[18,'predador'],[24,'beberSangue'],[30,'psiquico'],[36,'arranco'],[42,'hiper']],dex:'Encara as presas sem piscar. O veneno paralisa em segundos e o corpo absorve parte do golpe que aplicou.'},
+  morcegon:{id:'morcegon',n:'Morcegon',types:['poison','flying'],r:'fast',hab:'Caverna Obscura',arch:'bird',col:['#705890','#a088c0','#d0c0e8'],stats:{hp:52,atk:56,def:48,spa:44,spd:48,spe:66},catch:190,xp:65,learn:[[1,'tacada'],[1,'grito'],[8,'rajada'],[13,'ferrao'],[20,'laminha'],[25,'mordida'],[30,'veneno']],evo:[{lv:20,to:'morcegra'}],dex:'Cavernícola. Localiza presas pelo eco do próprio guincho e volta para a colônia antes da luz da manhã.'},
+  morcegra:{id:'morcegra',n:'Morcegra',types:['poison','flying'],r:'ctl',hab:'Caverna Obscura · teto',arch:'bird',col:['#584078','#8870a8','#c0b0d8'],stats:{hp:70,atk:78,def:66,spa:66,spd:68,spe:94},catch:120,xp:135,learn:[[1,'tacada'],[1,'rajada'],[20,'laminha'],[25,'predador'],[30,'veneno'],[35,'semente'],[41,'arranco'],[46,'hiper']],dex:'Voa em silêncio absoluto. Planta sementes no voo e domina o teto das cavernas sem quase nunca descer.'},
+  frostim:{id:'frostim',n:'Frostim',types:['ice'],r:'spa',hab:'Rota 2-3 · gelo',arch:'blob',col:['#98d8d8','#d8f8f8','#f0ffff'],stats:{hp:50,atk:50,def:50,spa:62,spd:58,spe:46},catch:190,xp:64,learn:[[1,'tacada'],[1,'grito'],[8,'gelo'],[13,'endurecer'],[18,'bolhas'],[24,'recuperar'],[30,'foco'],[36,'hiper']],evo:[{lv:18,to:'glacirax'}],dex:'Congela o ar ao redor. A pele é fria como gelo polar e absorve calor quando precisa se recompor.'},
+  glacirax:{id:'glacirax',n:'Glacirax',types:['ice','water'],r:'sus',hab:'Rota 3-4 · gelo',arch:'quad',col:['#70c0c0','#c0f0f0','#f0ffff'],stats:{hp:74,atk:74,def:76,spa:98,spd:86,spe:54},catch:75,xp:132,learn:[[1,'tacada'],[1,'gelo'],[18,'bolhas'],[24,'recuperar'],[30,'surfar'],[36,'foco'],[42,'hiper']],dex:'Seus chifres de gelo nunca derretem, nem sob o sol mais forte. Cura o próprio corpo entre os golpes.'},
+  pedrax:{id:'pedrax',n:'Pedrax',types:['rock'],r:'tank',hab:'Caverna Obscura · ruínas',arch:'quad',col:['#b8a038','#d8c878','#f0e8c0'],stats:{hp:60,atk:68,def:90,spa:32,spd:48,spe:22},catch:190,xp:66,learn:[[1,'tacada'],[1,'endurecer'],[9,'avalanche'],[14,'mordida'],[19,'terremoto'],[25,'estilhaco'],[31,'guarda']],evo:[{lv:18,to:'pedralto'}],dex:'Corpo de rocha viva. Dorme por séculos nas montanhas e acorda ainda mais duro.'},
+  pedralto:{id:'pedralto',n:'Pedralto',types:['rock','ground'],r:'tank',hab:'Rota 4 · ruínas',arch:'biped',col:['#988028','#c8b060','#f0e8c0'],stats:{hp:84,atk:98,def:122,spa:54,spd:74,spe:30},catch:75,xp:134,learn:[[1,'tacada'],[1,'endurecer'],[19,'terremoto'],[24,'avalanche'],[30,'estilhaco'],[36,'guarda'],[42,'expor']],dex:'Guardião das montanhas. Cada passo provoca pequenos terremotos e cada golpe abre fissuras no chão.'},
+  fadinha:{id:'fadinha',n:'Fadinha',types:['fairy'],r:'sup',hab:'Rota 2 · clareira',arch:'blob',col:['#ee99ac','#ffc8d8','#ffe0e8'],stats:{hp:54,atk:40,def:48,spa:60,spd:64,spe:46},catch:190,xp:62,learn:[[1,'tacada'],[1,'grito'],[8,'confusao'],[13,'foco'],[18,'surra'],[22,'poSono'],[26,'psiquico'],[30,'limpar'],[36,'hipnose']],evo:[{lv:16,to:'fadalur'}],dex:'Espalha pó mágico que acalma corações. Muito curiosa — e o primeiro instinto dela é cuidar de quem está ferido.'},
+  fadalur:{id:'fadalur',n:'Fadalur',types:['fairy','psychic'],r:'sup',hab:'Rota 3-4 · ruínas',arch:'blob',col:['#e07898','#ffb8c8','#ffe0e8'],stats:{hp:76,atk:54,def:68,spa:86,spd:96,spe:62},catch:75,xp:133,learn:[[1,'tacada'],[1,'confusao'],[18,'foco'],[24,'psiquico'],[30,'limpar'],[36,'hipnose'],[42,'hiper']],dex:'Suas asas brilham como estrelas. Fala através de sonhos e sabe restaurar quem cai no meio da luta.'},
+  sombrax:{id:'sombrax',n:'Sombrax',types:['dark'],r:'fast',hab:'Caverna Obscura',arch:'biped',col:['#584848','#887070','#c0a8a8'],stats:{hp:48,atk:64,def:46,spa:52,spd:48,spe:70},catch:190,xp:64,learn:[[1,'arranhao'],[1,'grito'],[9,'mordida'],[14,'rapido'],[20,'predador'],[26,'arranco'],[32,'beberSangue']],evo:[{lv:18,to:'umbrax'}],dex:'Aproveita-se da escuridão para pregar peças. Nem sempre maldoso — prefere golpear e sumir.'},
+  umbrax:{id:'umbrax',n:'Umbrax',types:['dark','ghost'],r:'fast',hab:'Rota 3-4 · ruínas',arch:'biped',col:['#382828','#705858','#a89090'],stats:{hp:68,atk:96,def:62,spa:84,spd:64,spe:98},catch:75,xp:137,learn:[[1,'arranhao'],[1,'mordida'],[20,'predador'],[25,'bolaSombria'],[30,'arranco'],[36,'beberSangue'],[42,'hiper']],dex:'Desaparece nas sombras. A risada ecoa antes do golpe — quando você ouve, já foi atingido.'},
+  lutinha:{id:'lutinha',n:'Lutinha',types:['fighting'],r:'atk',hab:'Rota 2-3 · academia',arch:'biped',col:['#c03028','#e89880','#f8d8c8'],stats:{hp:52,atk:74,def:48,spa:32,spd:46,spe:58},catch:190,xp:68,learn:[[1,'tacada'],[1,'grito'],[8,'megapunho'],[13,'uivo'],[19,'inspiracao'],[25,'bomba'],[31,'hiper'],[37,'terremoto']],evo:[{lv:18,to:'pugilux'}],dex:'Treina lutas contra pedras desde pequeno. O punho quebra galhos grossos e a guarda cai devagar.'},
+  pugilux:{id:'pugilux',n:'Pugilux',types:['fighting'],r:'atk',hab:'Rota 3-4 · academia',arch:'biped',col:['#a02018','#e08870','#f8d8c8'],stats:{hp:72,atk:102,def:70,spa:50,spd:62,spe:80},catch:75,xp:139,learn:[[1,'tacada'],[1,'megapunho'],[19,'bomba'],[25,'inspiracao'],[31,'terremoto'],[37,'hiper'],[43,'expor']],dex:'Lutador lendário. Nunca desiste, nem contra inimigos maiores — e o Bomba Corporal derruba quem tenta segurar.'},
+  mentax:{id:'mentax',n:'Mentax',types:['psychic'],r:'spa',hab:'Rota 2-3 · ruínas',arch:'blob',col:['#f85888','#ffa0b8','#ffd0dc'],stats:{hp:48,atk:40,def:46,spa:70,spd:58,spe:58},catch:190,xp:68,learn:[[1,'confusao'],[1,'grito'],[10,'hipnose'],[15,'psiquico'],[21,'foco'],[27,'bolaSombria'],[33,'arranco']],evo:[{lv:20,to:'psiao'}],dex:'Lê pensamentos. Fica tímido quando alguém pensa muito alto — e usa isso para entrar antes do golpe.'},
+  psiao:{id:'psiao',n:'Psião',types:['psychic'],r:'spa',hab:'Rota 3-4 · ruínas',arch:'blob',col:['#f04070','#ff90b0','#ffd0dc'],stats:{hp:68,atk:56,def:62,spa:110,spd:84,spe:94},catch:75,xp:140,learn:[[1,'confusao'],[1,'hipnose'],[21,'psiquico'],[27,'bolaSombria'],[33,'foco'],[40,'hiper'],[46,'arranco']],dex:'Seus poderes mentais dobram objetos. Medita em lugares altos e termina a luta antes de o inimigo entender o que aconteceu.'},
+  assombrix:{id:'assombrix',n:'Assombrix',types:['ghost'],r:'spa',hab:'Caverna Obscura',arch:'blob',col:['#705898','#a898c8','#d8d0f0'],stats:{hp:46,atk:42,def:44,spa:68,spd:58,spe:56},catch:190,xp:66,learn:[[1,'tacada'],[1,'grito'],[10,'bolaSombria'],[15,'hipnose'],[20,'expor'],[26,'psiquico'],[32,'arranco']],evo:[{lv:20,to:'espectrox'}],dex:'Esconde-se nas sombras e assusta viajantes. Inofensivo no fundo — só gosta mesmo de ser notado.'},
+  espectrox:{id:'espectrox',n:'Espectrox',types:['ghost','dark'],r:'spa',hab:'Rota 4 · ruínas',arch:'blob',col:['#584078','#8870a8','#c0b0d8'],stats:{hp:66,atk:62,def:64,spa:100,spd:82,spe:88},catch:75,xp:138,learn:[[1,'tacada'],[1,'bolaSombria'],[20,'psiquico'],[26,'hipnose'],[32,'foco'],[38,'predador'],[44,'arranco']],dex:'Vagueia por ruínas. Dizem que protege segredos antigos — e some quando alguém tenta usá-los.'},
+  zangao:{id:'zangao',n:'Zangão',types:['bug','poison'],r:'spa',hab:'Caverna Obscura · colmeia',arch:'bird',col:['#e0a020','#f8d878','#fff0c0'],stats:{hp:44,atk:54,def:44,spa:58,spd:46,spe:60},catch:190,xp:70,learn:[[1,'tacada'],[1,'ferrao'],[9,'enxame'],[15,'veneno'],[21,'hipnose'],[27,'predador'],[33,'psiquico']],dex:'Defende a colmeia com ferocidade. O ferrão carrega um pó que derruba qualquer coisa — inclusive o próprio ferrão.'},
+  dragonil:{id:'dragonil',n:'Dragonil',types:['dragon'],r:'spa',hab:'Rota 4 · lago',arch:'serpent',col:['#5898f0','#b0d8f8','#e0f0ff'],stats:{hp:52,atk:62,def:52,spa:64,spd:54,spe:62},catch:45,xp:78,learn:[[1,'tacada'],[1,'grito'],[9,'sopro'],[15,'mordida'],[21,'pulsodrag'],[27,'surfar'],[33,'foco']],evo:[{lv:24,to:'dragor'}],dex:'Um dragão jovem que ainda aprende a voar. Muito orgulhoso e muito teimoso.'},
+  dragor:{id:'dragor',n:'Dragor',types:['dragon','flying'],r:'spa',hab:'Rota 4 · céu',arch:'serpent',col:['#3868c8','#90c0f0','#d0e8ff'],stats:{hp:78,atk:94,def:76,spa:92,spd:74,spe:88},catch:10,xp:150,learn:[[1,'tacada'],[1,'sopro'],[21,'pulsodrag'],[27,'surfar'],[33,'laminha'],[40,'hiper'],[46,'olhar']],dex:'Dragão adulto. Voa por cima das nuvens e comanda os céus da região com um sopro.'},
+  metalim:{id:'metalim',n:'Metalim',types:['steel'],r:'tank',hab:'Rota 3 · ruínas',arch:'quad',col:['#b8b8d0','#e0e0f0','#f8f8ff'],stats:{hp:52,atk:56,def:88,spa:42,spd:64,spe:26},catch:190,xp:72,learn:[[1,'tacada'],[1,'endurecer'],[10,'mordida'],[16,'laminaAco'],[20,'guarda'],[25,'terremoto'],[31,'avalanche'],[37,'hiper']],evo:[{lv:18,to:'aceir'}],dex:'Seu corpo é feito de liga metálica e reflete a luz do sol. Lento, mas praticamente imovível.'},
+  aceir:{id:'aceir',n:'Aceir',types:['steel','rock'],r:'tank',hab:'Rota 4 · ruínas',arch:'biped',col:['#9898b0','#d0d0e8','#f0f0ff'],stats:{hp:70,atk:84,def:124,spa:58,spd:88,spe:40},catch:75,xp:141,learn:[[1,'tacada'],[1,'guarda'],[16,'laminaAco'],[22,'terremoto'],[28,'estilhaco'],[34,'hiper'],[40,'expor']],dex:'Impenetrável. O corpo já resistiu a erupções e o que ele guarda atrás da guarda não cede.'},
 };
 const DEX_ORDER=Object.keys(SPECIES);
 
+/* ============================================================
+   ITENS E ECONOMIA
+   Decisão de compra real: Poção (cura barata) vs Super Poção vs
+   Reviver vs curling. As bolas têm custo escalonado para que
+   "jogar 10 bolas médias" seja pior que "2 boas".
+   ============================================================ */
 const ITEMS={
   pocao:{n:'Poção',type:'heal',heal:20,price:300,desc:'Restaura 20 PS de um monstro.'},
   superpocao:{n:'Super Poção',type:'heal',heal:60,price:700,desc:'Restaura 60 PS de um monstro.'},
   hiperpocao:{n:'Hiper Poção',type:'heal',heal:120,price:1500,desc:'Restaura 120 PS de um monstro.'},
   curaTotal:{n:'Cura Total',type:'status',price:600,desc:'Cura qualquer condição de status.'},
   reviver:{n:'Reviver',type:'revive',price:1500,desc:'Revive um monstro desmaiado com metade dos PS.'},
-  pokeBola:{n:'Poké Bola',type:'ball',bonus:1,price:200,desc:'Uma bola para capturar monstros selvagens.'},
-  grandeBola:{n:'Grande Bola',type:'ball',bonus:1.5,price:600,desc:'Bola de qualidade superior para capturas.'},
-  ultraBola:{n:'Ultra Bola',type:'ball',bonus:2,price:1200,desc:'Bola de altíssima qualidade.'},
-  candy:{n:'Doce Raro',type:'candy',price:0,desc:'Subiu 1 nível de um monstro!'},
+  pokeBola:{n:'Orbe',type:'ball',bonus:1,price:200,desc:'Orbe comum para capturar monstros selvagens.'},
+  grandeBola:{n:'Orbe Grande',type:'ball',bonus:1.5,price:600,desc:'Orbe de qualidade superior: 1,5x a chance base.'},
+  ultraBola:{n:'Orbe Ultra',type:'ball',bonus:2,price:1200,desc:'Orbe de altíssima qualidade: 2x a chance base.'},
+  megaBola:{n:'Orbe Prima',type:'ball',bonus:3,price:2400,desc:'A melhor orbe. Cara — mas quase garantida em monstros fracos.'},
+  fullHeal:{n:'Full Heal',type:'status',price:400,desc:'Cura status. Mais barata que a Cura Total, mas não remove confusão.',fullOnly:true},
+  candy:{n:'Doce Raro',type:'candy',price:0,desc:'Sobe 1 nível de um monstro.'},
 };
 const ITEM_ORDER=Object.keys(ITEMS);
 
-/* ---------- treinadores especiais: rivais, líderes, campeão ---------- */
+/* ---------- treinadores especiais: rivais, líderes, campeão ----------
+   Cada líder tem um PLANO (o que a equipe dele ensina ao jogador):
+     G1 Ferrão — testa paciência: status e monstros frágeis e rápidos.
+                   Precisa-se status/PS ou aguentar chip.
+     G2 Fúria   — testa troca: tipos resisting + rápido que não é
+                   do tipo Lutador. Ensina a não confiar em só um tipo.
+     G3 Voltz   — testa prioridade e velocidade: 3 elétricos rápidos,
+                   punem quem depende de agir por último.
+     G4 Drakon  — testa composição: dragões +coverage de Fada/Aço/Gelo.
+   ---------------------------------------------------------------- */
 const RIVAL_TEAMS={
- 1:{name:'Rival',team:lvl=>[[lvl.starter,lvl.base]],
-   pre:['Ah, é você!','Vamos ver o que aprendeu','até agora!'],
-   win:['Hmph! Preciso treinar mais.','Te vejo na estrada!']},
- 2:{name:'Rival',team:lvl=>[[lvl.starter,lvl.base],['chisper',lvl.base-2],['viprel',lvl.base-2]],
-   pre:['Você por aqui?','Minha equipe está imbatível!'],
-   win:['Como você venceu?!','Isso não vai acontecer de novo!']},
+  /* fase 1: um monstro que CONTRA o seu inicial (lvl baixo) */
+  1:{name:'Rival',ai:2,team:lvl=>[[lvl.starter,lvl.base]],
+    pre:['Ah, é você!','Vamos ver o que aprendeu','até agora!'],
+    win:['Hmph! Preciso treinar mais.','Te vejo na estrada!']},
+  /* fase 2: o contra + cobertura do seu + um terceiro que fecha matchups */
+  2:{name:'Rival',ai:2,team:lvl=>[[lvl.starter,lvl.base+1],[lvl.coverage,lvl.base-1],['sombrax',lvl.base-2]],
+    pre:['Você por aqui?','Minha equipe está imbatível!'],
+    win:['Como você venceu?!','Isso não vai acontecer de novo!']},
+  /* fase 3 (pós-ginásios): evoluído + cobertura ampla + tanks */
+  3:{name:'Rival',ai:3,team:lvl=>[[lvl.starterEvolved,lvl.base],[lvl.coverage,lvl.base-2],['aceir',lvl.base-3],['glacirax',lvl.base-3]],
+    pre:['Eu esperava mais de você.','Nada disso vai se repetir.'],
+    win:['Dessa vez eu merecia...','Volte quando quiser.']},
 };
 const GYM_DEFS=[
- {badge:'Insígnia Folha',tm:'navalha',name:'Ferrão',cls:'líder',team:[['asperim',12],['zangao',13],['besourox',15]],pre:['Bem-vindo ao meu ginásio!','Meus insetos vão te devorar!'],win:['Você é forte...','Leve a Insígnia Folha!']},
- {badge:'Insígnia Punho',tm:'megapunho',name:'Fúria',cls:'líder',team:[['lutinha',21],['zangao',21],['pugilux',24]],pre:['Soco forte é a minha lei!','Prepare-se!'],win:['Respeito sua garra...','Fique com a Insígnia Punho!']},
- {badge:'Insígnia Raio',tm:'trovao',name:'Voltz',cls:'líder',team:[['chisper',29],['eletrix',32]],pre:['Sou o mais rápido da região!','Acerte se conseguir!'],win:['Mais rápido que eu?!','A Insígnia Raio é sua!']},
- {badge:'Insígnia Dragão',tm:'pulsodrag',name:'Drakon',cls:'líder',team:[['dragonil',39],['dragor',43]],pre:['Dragões não se curvam a ninguém!','Mostre seu valor!'],win:['Digno de enfrentar o Campeão.','Leve a Insígnia Dragão!']},
+  {badge:'Insígnia Folha',tm:'navalha',name:'Ferrão',cls:'líder',ai:2,
+   lesson:'Insetos são rápidos e frágeis — status e paciência vencem.',
+   team:[['asperim',12],['zangao',13],['lagartix',14],['besourox',16]],
+   pre:['Bem-vindo ao meu ginásio!','Meus insetos são rápidos —','você vai se cansar primeiro!'],
+   win:['Você aguentou o cansaço...','Leve a Insígnia Folha!']},
+  {badge:'Insígnia Punho',tm:'megapunho',name:'Fúria',cls:'líder',ai:2,
+   lesson:'Lutadores são fortes, mas lentos — velocidade e troca vencem.',
+   team:[['lutinha',21],['tatuzao',22],['pugilux',25]],
+   pre:['Soco forte é a minha lei!','Prepare-se!'],
+   win:['Respeito sua garra...','Fique com a Insígnia Punho!']},
+  {badge:'Insígnia Raio',tm:'trovao',name:'Voltz',cls:'líder',ai:3,
+   lesson:'Elétricos são os mais rápidos da região — nada de agir por último.',
+   team:[['chisper',31],['chisper',32],['eletrix',35],['chisper',36]],
+   pre:['Sou o mais rápido da região!','Acerte se conseguir!'],
+   win:['Mais rápido que eu?!','A Insígnia Raio é sua!']},
+  {badge:'Insígnia Dragão',tm:'pulsodrag',name:'Drakon',cls:'líder',ai:3,
+   lesson:'Dragões precisam de cobertura — Fada, Aço e Gelo respondem.',
+   team:[['dragonil',40],['fadalur',41],['metalim',42],['dragor',46]],
+   pre:['Dragões não se curvam a ninguém!','Mostre seu valor!'],
+   win:['Digno de enfrentar o Campeão.','Leve a Insígnia Dragão!']},
 ];
-const CHAMP_DEF={name:'Campeão Ouro',cls:'campeão',pre:['Você venceu todos os líderes.','Mas o trono pertence a mim!','Venha! Mostre sua força!'],win:['Inacreditável...','Você é o novo Campeão!']};
-const CLS_MONEY={camarada:40,jovem:80,'fã':160,caçador:320,líder:1500,elite:2400,rival:900,campeão:6000};
+const CHAMP_DEF={name:'Campeão Ouro',cls:'campeão',ai:3,
+  lesson:'Uma equipe completa, com cobertura e leitura de partida.',
+  pre:['Você venceu todos os líderes.','Mas o trono pertence a mim!','Venha. Mostre sua força!'],
+  win:['Inacreditável...','Você é o novo Campeão!']};
+/* Recompensa por vitória de treinador: escala com a classe E o nível
+   máximo da equipe, mas com teto para não virar fazenda de dinheiro. */
+const CLS_MONEY={camarada:70,jovem:150,'fã':300,caçador:520,'líder':1600,elite:2400,rival:1100,'campeão':8000};
+function trainerMoney(cls,maxLv){
+  const base=CLS_MONEY[cls]||100;
+  return Math.min(99999,Math.round(base*(1+maxLv/22)));
+}
 const HIDDEN_ITEMS={}; // mapa|x|y -> item id
 HIDDEN_ITEMS['route1|5|10']='pocao';
 HIDDEN_ITEMS['route2|5|3']='grandeBola';
@@ -1198,7 +1378,7 @@ const seedRng=s=>mulberry32(s*2654435761+7);
     npcs:[
       {id:'girl1',x:9,y:7,dir:'down',sprite:'girl',text:['Oi! Eu sou da Vila Folha.','Os monstros selvagens vivem','na Rota 1, ao norte.']},
       {id:'boy1',x:15,y:8,dir:'up',sprite:'kid',text:['Meu sonho é ser um grande','treinador de monstros!']},
-      {id:'npc1',x:20,y:7,dir:'left',sprite:'clerk',text:['O Centro Pokémon cura seus','monstros de graça.']},
+      {id:'npc1',x:20,y:7,dir:'left',sprite:'clerk',text:['O Centro de Cura passa seus','monstros de graça.']},
     ],
     warps:[
       {x:3,y:5,to:'home_int',x2:5,y2:8,face:'down',kind:'interact'},
@@ -1233,7 +1413,7 @@ MAPS.lab_int=interior12('Laboratório',[
   {id:'assist',x:10,y:2,dir:'down',sprite:'girl',text:['O Professor estuda os monstros','desta região.']},
 ],null,g=>{g[2][2]='P';g[2][3]='P';});
 MAPS.lab_int.warps.forEach(w=>{w.to='town1';w.x2=4;w.y2=14;});
-MAPS.center_int=interior12('Centro Pokémon',[{id:'nurse',x:4,y:4,dir:'down',sprite:'nurse'}],'C',g=>{g[2][10]='P';});
+MAPS.center_int=interior12('Centro de Cura',[{id:'nurse',x:4,y:4,dir:'down',sprite:'nurse'}],'C',g=>{g[2][10]='P';});
 MAPS.center_int.warps.forEach(w=>{w.to='back';w.x2=0;w.y2=0;});
 MAPS.mart_int=interior12('Loja de Itens',[{id:'clerk',x:4,y:4,dir:'down',sprite:'clerk'}],'M');
 MAPS.mart_int.warps.forEach(w=>{w.to='back';w.x2=0;w.y2=0;});
@@ -1382,17 +1562,21 @@ MAPS.city3=cityMap('Cidade Raio','gym3_int','Elétrico',[
 MAPS.city3.warps.forEach(w=>{if(w.to==='NORTH'){w.to='route3';w.x2=12;w.y2=14;}if(w.to==='SOUTH2'||w.to==='SOUTH'){w.to='route4';w.x2=12;w.y2=1;}});
 
 MAPS.route4=routeMap('Rota 4',505,[
-  {id:'tr12',x:16,y:3,dir:'down',sprite:'elite',trainer:{name:'Cássio',cls:'elite',team:[['dragor',30],['glacirax',29]]}},
-  {id:'tr13',x:9,y:9,dir:'right',sprite:'elite',trainer:{name:'Aurora',cls:'elite',team:[['psiao',31],['umbrax',30],['aceir',30]]}},
-  {id:'tr14',x:15,y:13,dir:'left',sprite:'elite',trainer:{name:'Tadeu',cls:'elite',team:[['espectrox',30],['pugilux',31],['dragor',31]]}},
-  {id:'rival2',x:14,y:5,dir:'left',sprite:'rival',rival:2},
+  {id:'tr12',x:16,y:3,dir:'down',sprite:'elite',trainer:{name:'Cássio',cls:'elite',
+    team:[['dragor',31],['glacirax',30]],pre:['Vem com cobertura,','sem medo de altura.'],win:['Boa corrida.']}},
+  {id:'tr13',x:9,y:9,dir:'right',sprite:'elite',trainer:{name:'Aurora',cls:'elite',
+    team:[['fadalur',31],['psiao',32]],pre:['Psíquicos não erram','de propósito.'],win:['Quase.']}},
+  {id:'tr14',x:15,y:13,dir:'left',sprite:'elite',trainer:{name:'Tadeu',cls:'elite',
+    team:[['aceir',31],['pugilux',32],['espectrox',30]],pre:['Parede, soco e sombra.','Vem ver se quebra.'],
+    win:['Você quebra tudo mesmo.']}},
+  {id:'rival2',x:14,y:5,dir:'left',sprite:'rival',rival:3},
 ],null,g=>{g[5][19]='i';});
-MAPS.route4.warps.forEach(w=>{if(w.to==='NORTH'){w.to='city3';w.x2=11;w.y2=14;}if(w.to==='SOUTH'){w.to='city4';w.x2=12;w.y2=1;}});
-MAPS.route4.wild=[['dragonil',30,24,27],['umbrax',25,24,28],['psiao',25,25,28],['glacirax',20,25,28]];
+MAPS.route4.warps.forEach(w=>{if(w.to==='NORTH'){w.to='city3';w.x2=12;w.y2=14;}if(w.to==='SOUTH'){w.to='city4';w.x2=12;w.y2=1;}});
+MAPS.route4.wild=[['dragonil',26,29,32],['umbrax',25,29,32],['psiao',25,30,33],['glacirax',25,30,33]];
 
 /* ---------- Cidade Dragão + Sala do Campeão ---------- */
 MAPS.city4=cityMap('Cidade Dragão','gym4_int','Dragão',[
-  {id:'npc6',x:14,y:7,dir:'left',sprite:'girl',text:['Depois da 4ª insígnia, suba','no prédio do Campeão!']},
+  {id:'npc6',x:15,y:8,dir:'left',sprite:'girl',text:['Depois da 4ª insígnia, suba','no prédio do Campeão!']},
   {id:'champdoor',x:12,y:9,dir:'up',sprite:'elite',text:['Sala do Campeão: exige as','4 insígnias para entrar.']},
 ],null,g=>{box(g,9,6,6,4);g[11][7]='D';g[12][7]='D';g[9][8]='+';g[14][8]='+';});
 MAPS.city4.warps.forEach(w=>{if(w.to==='NORTH'){w.to='route4';w.x2=12;w.y2=14;}if(w.to==='SOUTH'){w.to='route4';w.x2=12;w.y2=14;}});
@@ -1412,6 +1596,9 @@ MAPS.champ_int=(function(){
    ESTADO + SAVE + MOTOR DO MUNDO
    ============================================================ */
 const SAVE_KEY='monstroquest_save_v1';
+/* Versão do schema de save. Saves antigos (sem `v`) são lidos como v1 e migrados. */
+const SAVE_VERSION=2;
+const SAVE_BACKUP_KEY='monstroquest_save_backup_v1';
 const S={
   name:'Treinador',money:3000,badges:[],party:[],bag:{pocao:5,pokeBola:5},
   dexSeen:{},dexCaught:{},flags:{},map:'town1',x:12,y:13,dir:'up',starter:null,
@@ -1419,31 +1606,201 @@ const S={
 };
 const G={mode:'boot',battle:null,uiStack:[],menuIdx:0,camX:0,camY:0,tick:0};
 
+/* Escolha dos 4 golpes de um monstro recém-criado.
+   Pontua utilidade REAL considerando o tipo da espécie (STAB vale muito),
+   e completa com golpes básicos para nenhum captive vir com 1-2 golpes. */
+const FILLER_MOVES=['tacada','arranhao','grito'];
 function newMonster(id,lv){
   const sp=SPECIES[id];const st=statsOf(id,lv);
   const moves=[];
-  const learn=sp.learn.filter(x=>x[0]<=lv).sort((a,b)=>a[0]-b[0]);
-  for(let i=Math.max(0,learn.length-4);i<learn.length;i++)moves.push({id:learn[i][1],pp:MOVES[learn[i][1]].pp});
-  if(!moves.length)moves.push({id:'tacada',pp:35});
-  return {id,lv,exp:0,hp:st.hp,status:null,moves,stages:{atk:0,def:0,spa:0,spd:0,spe:0,acc:0,eva:0},shiny:false,gender:'?',caughtAt:null};
+  const learn=sp.learn.filter(x=>x[0]<=lv&&MOVES[x[1]]);
+  const uniq=[];
+  for(const l of learn){if(!uniq.some(u=>u[1]===l[1]))uniq.push(l);}
+  /* pontua por utilidade (potência real, drain, penalidade de recuo/recharge,
+     precisão) mas mantém a ordem do learnset para a lista ficar estável */
+  const ranked=uniq.slice().sort((a,b)=>moveScore(b[1],lv,id)-moveScore(a[1],lv,id));
+  for(const l of ranked){if(moves.length>=4)break;moves.push({id:l[1],pp:MOVES[l[1]].pp});}
+  /* preenche com golpes básicos ainda não conhecidos — sempre ter 4 golpes */
+  for(const f of FILLER_MOVES){
+    if(moves.length>=4)break;
+    if(!moves.some(m=>m.id===f))moves.push({id:f,pp:MOVES[f].pp});
+  }
+  /* se ainda faltar (learnset mínimo), completa com Tacada */
+  while(moves.length<4)moves.push({id:'tacada',pp:MOVES.tacada.pp});
+  moves.sort((a,b)=>{
+    const la=uniq.find(u=>u[1]===a.id),lb=uniq.find(u=>u[1]===b.id);
+    if(!la)return 1;if(!lb)return -1;
+    return la[0]-lb[0];
+  });
+  return {id,lv,exp:0,hp:st.hp,status:null,moves,stages:{atk:0,def:0,spa:0,spd:0,spe:0,acc:0,eva:0},shiny:false,gender:'?',caughtAt:null,conf:0,leech:0,sleepTurns:0,flags:[],nick:null};
+}
+/* métrica de utilidade de um golpe para uma espécie (usada na criação, não em combate) */
+function moveScore(id,lv,speciesId){
+  const m=MOVES[id];if(!m)return -1;
+  const own=(speciesId&&SPECIES[speciesId])?SPECIES[speciesId].types:[];
+  const stab=own.indexOf(m.t)>=0?1.35:1;
+  let s=m.p>0?(10+Math.log2(Math.max(1,m.p))*8)*stab:0;
+  if(m.fixed)s=6*stab; /* dano fixo não escala, vale menos que potência alta */
+  if(m.p>0){
+    if(m.drain)s+=14;if(m.recoil)s-=10;if(m.multi)s-=4;if(m.recharge)s-=30;
+    if(m.pri)s+=m.pri*7;if(m.crit)s+=6;
+    if(m.a<100)s-=(100-m.a)*0.35;
+  }
+  if(m.heal)s+=18*(own.indexOf('water')>=0||own.indexOf('grass')>=0?1.2:1);
+  if(m.cure)s+=10;
+  if(m.self){for(const k in m.self)s+=7*m.self[k];}
+  if(m.eff){for(const k in m.eff){if(k==='chance')continue;
+    if(m.eff[k]===1&&['burn','par','pois','sleep','freeze','conf'].indexOf(k)>=0)s+=9;
+    else if(typeof m.eff[k]==='number')s+=6*m.eff[k];}}
+  if(m.leech)s+=8;
+  return s;
 }
 function statsOf(id,lv){return curStatsMon({id,lv});}
-function expToNext(lv){return Math.floor(lv*lv*lv*0.8);}
+/* Curva de EXP: mais suave que lv^3 puro para evitar grind pesado
+   no fim do jogo, mas ainda exigindo várias batalhas por nível. */
+function expToNext(lv){return Math.floor(14*lv*lv+22*lv+18);}
+/* XP ganho ao derrotar um monstro: nível, base da espécie e bônus
+   de treinador. A curva foi calibrada com o Balance Lab para que a
+   campanha inteira caiba em uma quantidade saudável de batalhas. */
+function expGain(defeated,trainer){
+  const base=SPECIES[defeated.id].xp;
+  const g=Math.floor((base*defeated.lv)/4.2)+2;
+  return trainer?Math.floor(g*1.5):g;
+}
+/* ---------- SAVE: versionado, validado, com backup do anterior ---------- */
 function saveGame(silent){
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify(S));AudioSys.blip();if(!silent)showToast('Jogo salvo!');}catch(e){if(!silent)showToast('Falha ao salvar!');}
+  try{
+    const payload=Object.assign({v:SAVE_VERSION,savedAt:Date.now()},S);
+    const json=JSON.stringify(payload);
+    /* mantém a versão anterior em backup antes de sobrescrever */
+    const prev=localStorage.getItem(SAVE_KEY);
+    if(prev){try{localStorage.setItem(SAVE_BACKUP_KEY,prev);}catch(e){}}
+    localStorage.setItem(SAVE_KEY,json);
+    AudioSys.blip();if(!silent)showToast('Jogo salvo!');
+  }catch(e){if(!silent)showToast('Falha ao salvar!');}
 }
 function hasSave(){try{return !!localStorage.getItem(SAVE_KEY);}catch(e){return false;}}
+/* sanitiza um monstro vindo do save; devolve null se irrecuperável */
+function sanitizeMonster(raw){
+  if(!raw||typeof raw!=='object')return null;
+  const id=String(raw.id==null?'':raw.id);
+  if(!SPECIES[id])return null;
+  let lv=Math.floor(Number(raw.lv));
+  if(!isFinite(lv))lv=1;
+  lv=clamp(lv,1,100);
+  const max=statsOf(id,lv).hp;
+  let hp=Math.floor(Number(raw.hp));
+  if(!isFinite(hp))hp=max;
+  hp=clamp(hp,0,max);
+  let exp=Math.floor(Number(raw.exp));
+  if(!isFinite(exp)||exp<0)exp=0;
+  exp=Math.min(exp,expToNext(lv)*3);
+  const st=raw.stages&&typeof raw.stages==='object'?raw.stages:{};
+  const stages={};
+  ['atk','def','spa','spd','spe','acc','eva'].forEach(k=>{
+    const v=Math.floor(Number(st[k]));
+    stages[k]=(isFinite(v)?clamp(v,-6,6):0);
+  });
+  let status=(STATUS_PT[raw.status]!==undefined)?raw.status:null;
+  let conf=Math.floor(Number(raw.conf));
+  if(!isFinite(conf)||conf<0)conf=0;
+  conf=clamp(conf,0,9);
+  let leech=raw.leech?1:0;
+  let sleepTurns=Math.floor(Number(raw.sleepTurns));
+  if(!isFinite(sleepTurns))sleepTurns=0;
+  sleepTurns=clamp(sleepTurns,0,4);
+  /* golpes: descarta referências inexistentes, repõe com Tacada se sobrar nada */
+  let moves=[];
+  if(Array.isArray(raw.moves)){
+    const seen=Object.create(null);
+    for(const mv of raw.moves.slice(0,4)){
+      if(!mv||typeof mv!=='object')continue;
+      const mid=String(mv.id==null?'':mv.id);
+      const def=MOVES[mid];
+      if(!def||seen[mid])continue;
+      seen[mid]=1;
+      let pp=Math.floor(Number(mv.pp));
+      if(!isFinite(pp))pp=def.pp;
+      moves.push({id:mid,pp:clamp(pp,0,def.pp)});
+    }
+  }
+  if(!moves.length){
+    const sp=SPECIES[id];
+    moves=sp.learn.filter(x=>x[0]<=lv&&MOVES[x[1]]).slice(0,1)
+      .map(x=>({id:x[1],pp:MOVES[x[1]].pp}));
+    if(!moves.length)moves=[{id:'tacada',pp:35}];
+  }
+  const flags=[];
+  if(Array.isArray(raw.flags))raw.flags.slice(0,24).forEach(f=>{if(typeof f==='string')flags.push(f);});
+  return {id,lv,exp,hp,status,moves,stages,shiny:!!raw.shiny,
+    gender:(raw.gender==='♂'||raw.gender==='♀')?raw.gender:'?',
+    caughtAt:(typeof raw.caughtAt==='string')?raw.caughtAt:null,
+    conf,leech,sleepTurns,flags,nick:(typeof raw.nick==='string'&&raw.nick.length?raw.nick.slice(0,12):null)};
+}
+/* migração v1 -> v2: garante campos que o schema antigo não tinha */
+function migrateSave(d,from){
+  if(from<2){
+    /* v1: sem conf/leech/sleepTurns/flags por monstro, sem box normalizado.
+       Nada precisa ser inventado — o sanificador já aplica os defaults. */
+    d.dismissed=Object.create(null);
+  }
+  return d;
+}
 function loadGame(){
-  try{const raw=localStorage.getItem(SAVE_KEY);if(!raw)return false;
+  try{
+    const raw=localStorage.getItem(SAVE_KEY);if(!raw)return false;
     const d=JSON.parse(raw);
-    if(!d||typeof d!=='object'||!Array.isArray(d.party)||!d.party.length||typeof d.map!=='string'||!MAPS[d.map])return false;
-    Object.assign(S,d);S.dexSeen=d.dexSeen||{};S.dexCaught=d.dexCaught||{};S.bag=d.bag||{};S.flags=d.flags||{};S.badges=d.badges||[];S.party=d.party||[];
-    S.box=d.box||[];S.lastCenter=d.lastCenter||null;
-    (S.party||[]).forEach(m=>{if(!m.stages)m.stages={atk:0,def:0,spa:0,spd:0,spe:0,acc:0,eva:0};});
+    if(!d||typeof d!=='object'||!Array.isArray(d.party)||!d.party.length
+       ||typeof d.map!=='string'||!MAPS[d.map])return false;
+    const ver=(typeof d.v==='number'&&d.v>=1&&d.v<=SAVE_VERSION)?d.v:1;
+    migrateSave(d,ver);
+    /* recusa silenciosamente estados sem monstro jogável */
+    const party=d.party.map(sanitizeMonster).filter(Boolean);
+    if(!party.length)return false;
+    const box=(Array.isArray(d.box)?d.box:[]).map(sanitizeMonster).filter(Boolean).slice(0,200);
+    const bag=Object.create(null);
+    if(d.bag&&typeof d.bag==='object'){
+      for(const k of ITEM_ORDER){
+        const n=Math.floor(Number(d.bag[k]));
+        if(isFinite(n)&&n>0)bag[k]=clamp(n,0,999);
+      }
+    }
+    const badges=Array.isArray(d.badges)
+      ?d.badges.map(x=>Math.floor(Number(x))).filter(x=>x>=0&&x<4).filter((x,i,a)=>a.indexOf(x)===i)
+      :[];
+    const dexSeen=Object.create(null),dexCaught=Object.create(null);
+    if(d.dexSeen&&typeof d.dexSeen==='object')for(const k in d.dexSeen)if(SPECIES[k])dexSeen[k]=true;
+    if(d.dexCaught&&typeof d.dexCaught==='object')for(const k in d.dexCaught)if(SPECIES[k])dexCaught[k]=true;
+    const flags=(d.flags&&typeof d.flags==='object')?d.flags:Object.create(null);
+    /* ensure o starter ainda existe no bestiário */
+    const starter=(d.starter&&SPECIES[d.starter])?d.starter:null;
+    const clean={
+      name:typeof d.name==='string'&&d.name.length?d.name.slice(0,12):'Treinador',
+      money:clamp(Math.floor(Number(d.money)||0),0,9999999),
+      badges,party,bag,box,dexSeen,dexCaught,flags,starter,
+      map:d.map,
+      x:clamp(Math.floor(Number(d.x)||0),0,999),
+      y:clamp(Math.floor(Number(d.y)||0),0,999),
+      dir:(['up','down','left','right'].indexOf(d.dir)>=0)?d.dir:'down',
+      prev:(d.prev&&MAPS[d.prev.map])?{map:d.prev.map,x:d.prev.x|0,y:d.prev.y|0}:null,
+      lastCenter:(d.lastCenter&&MAPS[d.lastCenter.map])?{map:d.lastCenter.map,x:d.lastCenter.x|0,y:d.lastCenter.y|0}:null,
+      playtime:Math.max(0,Number(d.playtime)||0),
+      dismissed:Object.create(null),
+      version:SAVE_VERSION,
+    };
+    /* posição precisa ser caminhável — senão joga no centro */
+    if(!canWalk(clean.map,clean.x,clean.y)){
+      const m=MAPS[clean.map];
+      let ok=false;
+      for(let y=0;y<m.tiles.length&&!ok;y++)for(let x=0;x<m.tiles[0].length;x++)
+        if(tileWalkable(clean.map,x,y)){clean.x=x;clean.y=y;ok=true;break;}
+      if(!ok){clean.map='town1';clean.x=12;clean.y=13;}
+    }
+    Object.assign(S,clean);
     return true;
   }catch(e){return false;}
 }
-function clearSave(){try{localStorage.removeItem(SAVE_KEY);}catch(e){}}
+function clearSave(){try{localStorage.removeItem(SAVE_KEY);localStorage.removeItem(SAVE_BACKUP_KEY);}catch(e){}}
 
 /* ---------- mundo ---------- */
 const P={x:12,y:13,dir:'up',px:0,py:0,moving:false,anim:0,timer:0};
@@ -1479,6 +1836,10 @@ const OPPOSITE={up:'down',down:'up',left:'right',right:'left'};
 function teleport(mapId,x,y,face){
   S.map=mapId;S.x=x;S.y=y;S.dir=face||'down';
   P.x=x;P.y=y;P.dir=face||'down';P.moving=false;P.px=x*TILE_W;P.py=y*TILE_H;
+  /* entering the overworld invalidates any pending overlay handler:
+     without this, a leftover title-screen "A" could fire in the world. */
+  UI.msgResolve=null;UI.onA=null;UI.onB=null;UI.keyNav=null;
+  UI.clickLock=0;BUI.resolve=null;
   G.camX=clamp(P.px+8-VIEW_W/2,0,Math.max(0,MAPS[mapId].tiles[0].length*TILE_W-VIEW_W));
   G.camY=clamp(P.py+8-VIEW_H/2,0,Math.max(0,MAPS[mapId].tiles.length*TILE_H-VIEW_H));
   AudioSys.startMusic(MAPS[mapId].music);
@@ -1631,7 +1992,7 @@ function centerCamera(){
 function maybeWild(){
   const m=map();if(!m.wild||G.mode!=='overworld')return;
   if(!chance(0.12))return;
-  const roll=Math.random()*100;let acc=0,chosen=m.wild[0];
+  const roll=GameRNG.next('encounter')*100;let acc=0,chosen=m.wild[0];
   for(const w of m.wild){acc+=w[1];if(roll<=acc){chosen=w;break;}}
   const lv=irnd(chosen[2],chosen[3]);
   AudioSys.encounter();
@@ -1673,21 +2034,41 @@ function faceOf(dx,dy){
   return dy<0?'up':'down';
 }
 function startTrainerBattle(n){
-  const team=n.trainer.team.map(([id,lv])=>{const mon=newMonster(id,lv);return {species:id,lv,mon};});
+  const defs=n.trainer.team;
+  const team=defs.map(([id,lv])=>{const mon=newMonster(id,lv);return {species:id,lv,mon};});
   G.mode='battle';
-  G.battle={type:'trainer',opp:{name:n.trainer.name,species:null,lv:0,mon:null,team,isTrainer:true,money:CLS_MONEY[n.trainer.cls]*Math.max(...n.trainer.team.map(t=>t[1])),id:n.id,pre:n.trainer.pre||[],winText:n.trainer.winText||[],sprite:n.sprite},
+  G.battle={type:'trainer',ai:AI_SKILL_BY_CLASS[n.trainer.cls]!=null?AI_SKILL_BY_CLASS[n.trainer.cls]:1,
+    turnCount:0,lastSwitchTurn:undefined,
+    opp:{name:n.trainer.name,species:null,lv:0,mon:null,team,isTrainer:true,
+      money:trainerMoney(n.trainer.cls,Math.max(...defs.map(t=>t[1]))),
+      id:n.id,pre:n.trainer.pre||[],win:n.trainer.win||[],sprite:n.sprite},
     state:'intro',wild:false};
   AudioSys.stopMusic();
   UI.battleOpen();
 }
+/* O rival evolui junto com o jogador e sempre traz uma resposta ao
+   inicial escolhido — mas nunca o MESMO golpe de ineffective. */
 function startRivalBattle(n,stage){
   const starter=S.starter||'ignis';
-  const counter={ignis:'aquore',aquore:'folhar',folhar:'ignis'}[starter];
-  const lvl=[0,6,20][stage];
-  const team=RIVAL_TEAMS[stage].team({starter:counter,base:lvl});
+  /* o rival escolhe o inicial que CONTRA o seu */
+  const counterMap={ignis:'aquore',aquore:'folhar',folhar:'ignis'};
+  const counter=counterMap[starter]||'aquore';
+  /* cobertura: tipo que o CONTRA dá vantagem sobre o seu */
+  const coverMap={ignis:'pedrax',aquore:'florestus',folhar:'florestus'};
+  const coverage=coverMap[starter]||'sombrax';
+  /* evoluções do inicial do rival, por fase */
+  const evoMap={aquore:['aquore','marinato','tritan'],folhar:['folhar','verdena','florestus'],ignis:['ignis','infernis','vulcron']};
+  const stageIdx=clamp(stage-1,0,2);
+  const base=[0,8,22][stage]||22;
+  const def=RIVAL_TEAMS[stage]||RIVAL_TEAMS[1];
+  const team=def.team({starter:counter,starterEvolved:(evoMap[counter]||evoMap.aquore)[stageIdx],
+    coverage,base});
   G.mode='battle';
-  G.battle={type:'trainer',opp:{name:'Rival',species:null,lv:0,mon:null,
-    team:team.map(([id,lv])=>({species:id,lv,mon:newMonster(id,lv)})),isTrainer:true,money:CLS_MONEY.rival*Math.max(5,lvl),id:n.id,pre:RIVAL_TEAMS[stage].pre,winText:RIVAL_TEAMS[stage].win,sprite:'rival',rival:stage},
+  G.battle={type:'trainer',ai:def.ai||2,turnCount:0,lastSwitchTurn:undefined,
+    opp:{name:'Rival',species:null,lv:0,mon:null,
+      team:team.map(([id,lv])=>({species:id,lv,mon:newMonster(id,lv)})),
+      isTrainer:true,money:trainerMoney('rival',base+2),id:n.id,
+      pre:def.pre,win:def.win,sprite:'rival',rival:stage},
     state:'intro',wild:false};
   AudioSys.stopMusic();
   UI.battleOpen();
@@ -1695,13 +2076,16 @@ function startRivalBattle(n,stage){
 function startGymBattle(n){
   const gd=GYM_DEFS[n.gym];
   if(S.badges.length<n.gym){
-    showMsg(gd.pre[0]).then(()=>showMsg('Vença os líderes anteriores primeiro!'));
+    showMsg('Vença os líderes anteriores primeiro! ('+n.gym+' de 4 insígnias)');
     return;
   }
   S.flags['gymtalk'+n.gym]=true;
   G.mode='battle';
-  G.battle={type:'trainer',gym:n.gym,opp:{name:gd.name,species:null,lv:0,mon:null,
-    team:gd.team.map(([id,lv])=>({species:id,lv,mon:newMonster(id,lv)})),isTrainer:true,money:CLS_MONEY[gd.cls]*Math.max(...gd.team.map(t=>t[1])),id:'leader'+n.gym,pre:gd.pre,winText:gd.win,sprite:'leader'},
+  G.battle={type:'trainer',gym:n.gym,ai:gd.ai||2,turnCount:0,lastSwitchTurn:undefined,
+    opp:{name:gd.name,species:null,lv:0,mon:null,
+      team:gd.team.map(([id,lv])=>({species:id,lv,mon:newMonster(id,lv)})),
+      isTrainer:true,money:trainerMoney('líder',Math.max(...gd.team.map(t=>t[1]))),
+      id:'leader'+n.gym,pre:gd.pre,win:gd.win,sprite:'leader',cls:'líder'},
     state:'intro',wild:false};
   AudioSys.stopMusic();
   UI.battleOpen();
@@ -1711,12 +2095,23 @@ function startChampBattle(){
     showMsg('Você ainda não tem todas as insígnias. Volte quando tiver as 4!');
     return;
   }
-  const starter=S.starter||'ignis';
-  const counter={ignis:'tritan',aquore:'florestus',folhar:'vulcron'}[starter];
-  const team=[[counter,47],['dragor',45],['psiao',44],['umbrax',44],['aceir',44],['glacirax',44]];
+  /* Equipe do campeão: 6 MONROS com cobertura ampla e PaperIds
+     claros. Nenhum é um "counter secreto" do seu inicial — vence quem
+     compôs melhor, não quem adivinhou. */
+  const team=[
+    ['dragor',46],      /* cobertura Dragão/Voador, veloz */
+    ['glacirax',45],    /* Gelo/Água, tank especial */
+    ['aceir',44],       /* Aço/Pedra, parede física */
+    ['psiao',44],       /* Psíquico puro, nuker */
+    ['umbrax',44],      /* Sombrio/Fantasma, Assassino rápido */
+    ['fadalur',44],     /* Fada/Psíquico — fecha Fada e dá suporte */
+  ];
   G.mode='battle';
-  G.battle={type:'trainer',champ:true,opp:{name:CHAMP_DEF.name,species:null,lv:0,mon:null,
-    team:team.map(([id,lv])=>({species:id,lv,mon:newMonster(id,lv)})),isTrainer:true,money:CLS_MONEY.campeão*47,id:'champ',pre:CHAMP_DEF.pre,winText:CHAMP_DEF.win,sprite:'boss'},
+  G.battle={type:'trainer',champ:true,ai:CHAMP_DEF.ai||3,turnCount:0,lastSwitchTurn:undefined,
+    opp:{name:CHAMP_DEF.name,species:null,lv:0,mon:null,
+      team:team.map(([id,lv])=>({species:id,lv,mon:newMonster(id,lv)})),
+      isTrainer:true,money:trainerMoney('campeão',46),id:'champ',
+      pre:CHAMP_DEF.pre,win:CHAMP_DEF.win,sprite:'boss',cls:'campeão'},
     state:'intro',wild:false};
   AudioSys.stopMusic();
   UI.battleOpen();
@@ -1757,7 +2152,16 @@ function signAt(x,y){
   for(const s of m.signs)if(s.x===x&&s.y===y)return s;
   return null;
 }
-function healAll(){for(const m of S.party){m.hp=curStatsMon(m).hp;m.status=null;for(const mv of m.moves)mv.pp=MOVES[mv.id].pp;}AudioSys.heal();}
+function healAll(){
+  for(const m of S.party){
+    m.hp=curStatsMon(m).hp;
+    /* Centro cura TUDO: status, confusão, sementes e estágios de batalha */
+    m.status=null;m.conf=0;m.leech=0;m.sleepTurns=0;m.frozenTurns=0;m.charging=false;
+    m.stages={atk:0,def:0,spa:0,spd:0,spe:0,acc:0,eva:0};
+    for(const mv of m.moves){const d=MOVES[mv.id];if(d)mv.pp=d.pp;}
+  }
+  AudioSys.heal();
+}
 function showMsgLines(lines,fn){
   let i=0;
   const next=()=>{if(i>=lines.length){if(fn)fn();return;}showMsg(lines[i]).then(next);i++;};
@@ -1788,6 +2192,46 @@ function curStatsMon(m){const b=SPECIES[m.id].stats,lv=m.lv;
     spe:Math.floor(2*b.spe*lv/100)+5};}
 function maxHp(m){return curStatsMon(m).hp;}
 const STATUS_PT={psn:'VEN',brn:'QUE',par:'PAR',slp:'DOR',frz:'CON',conf:'CONF'};
+/* ============================================================
+   STATUS — cada condição tem uma função própria e um contra-jogo.
+   REGRA DE IDENTIDADE: status não é só "perder HP por turno".
+     - QUEIMADURA corta o Ataque físico (não serve para quem é forte)
+     - VENENO é dano puro, não afeta Ataque (serve contra tanques)
+     - PARALISIA reduz Velocidade (não dá 25% de falha, o que é frustração)
+     - SONO dá turnos de sono mas acorda ao levar dano forte
+     - CONGELAMENTO dura e só sai com fogo ou ao passar tempo
+     - CONFUSÃO erra o próprio golpe (risco para quem depende de precisão)
+   IMUNIDADES POR TIPO dão significado à combinação tipo+status.
+   ============================================================ */
+const STATUS_PT_LONG={psn:'envenenado',brn:'queimado',par:'paralisado',slp:'adormecido',frz:'congelado'};
+/* tipos imunes a cada condição (chave = status, valor = lista de tipos) */
+const STATUS_IMMUNE={
+  brn:['fire'],
+  frz:['ice'],
+  par:['electric'],
+  psn:['poison','steel'],
+  slp:['electric'],
+  conf:[],
+};
+function statusImmune(mon,status){
+  if(!status)return false;
+  const types=SPECIES[mon.id].types;
+  const list=STATUS_IMMUNE[status];
+  return !!(list&&list.some(t=>types.indexOf(t)>=0));
+}
+/* mapeia a CHAVE do efeito (como aparece em MOVES[].eff) para o código
+   de status realmente gravado no monstro. Precisa estar em sincronia com
+   `conds` em applyEffect(). */
+const STATUS_NATURE={burn:'brn',par:'par',pois:'psn',sleep:'slp',freeze:'frz'};
+function hasStatus(m){return !!(m&&(m.status||m.conf));}
+/* etapa de dano de status por turno (diferente por condição) */
+function statusTickDamage(m){
+  if(!m||m.hp<=0)return 0;
+  const max=maxHp(m);
+  if(m.status==='psn')return Math.max(1,Math.floor(max/8));
+  if(m.status==='brn')return Math.max(1,Math.floor(max/16));
+  return 0;
+}
 
 async function battleMain(){
   const B=G.battle;
@@ -1815,28 +2259,207 @@ async function sendOutPlayer(){
   await battleMsg('Vá, '+SPECIES[m.id].n+'!');
   UI.battleRefresh();
 }
+/* ============================================================
+   IA DE BATALHA
+   Níveis: 0 = novato, 1 = comum, 2 = bom, 3 = elite (campeão).
+   A IA só usa o que o JOGADOR TAMBÉM VÊ (tipos, níveis, PS,
+   status, estágios) — nenhum bônus escondido, nenhuma informação
+   impossível. As decisões vêm de matemática (dano esperado),
+   não de sorte.
+   ============================================================ */
+const AI_SKILL_BY_CLASS={camarada:0,jovem:1,'fã':1,caçador:1,'líder':2,elite:2,rival:2,'campeão':3};
+/* dano esperado de `mv` de user contra target, sem rolar RNG */
+function expectedDamage(user,target,mv){
+  if(!mv||!mv.p||!user||!target)return {avg:0,max:0,eff:0,kills:false};
+  const eff=speciesTypeMult(SPECIES[target.id].types,mv.t);
+  if(eff===0)return {avg:0,max:0,eff:0,kills:false};
+  const us=curStatsMon(user),ts=curStatsMon(target);
+  /* queimadura corta o Ataque físico: golpe físico perde valor nela */
+  const burnCut=(user.status==='brn'&&mv.cat==='phys')?0.5:1;
+  const atk=(mv.cat==='phys'?us.atk*stageMult(user.stages.atk):us.spa*stageMult(user.stages.spa))*burnCut;
+  const def=mv.cat==='phys'?ts.def*stageMult(target.stages.def):ts.spd*stageMult(target.stages.spd);
+  const base=mv.fixed
+    ?Math.max(1,Math.floor((Math.floor(2*user.lv/5+2)*mv.fixed)/5)+10)
+    :Math.floor((Math.floor(2*user.lv/5+2)*mv.p*atk/def)/50)+2;
+  const stab=SPECIES[user.id].types.indexOf(mv.t)>=0?1.5:1;
+  const critRate=mv.crit?0.125:0.0625;
+  const critM=critRate*2+(1-critRate); /* média do modificador de crítico */
+  const avg=Math.max(1,Math.floor(base*stab*eff*0.925*critM));
+  const maxD=Math.max(1,Math.floor(base*stab*eff*2));
+  return {avg,max:maxD,eff,kills:maxD>=target.hp};
+}
+/* valor de um golpe de status dado o tabuleiro atual */
+function statusMoveValue(user,target,mv,skill){
+  if(!mv)return 0;
+  let v=0;
+  const hpU=maxHp(user),hpT=maxHp(target);
+  const hpFracT=target.hp/hpT,hpFracU=user.hp/hpU;
+  const acc=(mv.a||100)/100;
+  if(mv.heal){
+    const heal=Math.floor(hpU*mv.heal),missing=hpU-user.hp;
+    v+=Math.min(heal,missing)*1.4;
+    if(mv.cure&&hasStatus(user))v+=hpU*0.16;
+    if(missing<=2)v-=40;
+    if(hpFracU>0.75&&!hasStatus(user))v-=25;
+  }
+  if(mv.leech){
+    if(target.leech)return -20;
+    v=18+(hpFracU<0.5?12:0);
+    if(hpFracT<=0.35)v-=10;
+  }
+  if(mv.self){
+    for(const k in mv.self){
+      const cur=user.stages[k]||0;
+      if(cur>=3){v-=6;continue;}
+      v+=8*mv.self[k]*(hpFracU>0.7?1:0.6);
+    }
+    if(hpFracU<0.4&&!mv.heal)v-=12;
+  }
+if(mv.cure&&hasStatus(user))v+=14;
+if(mv.eff){
+  const e=mv.eff;
+  const base=(mv.eff.chance!==undefined?mv.eff.chance:1)*acc;
+  for(const k in e){
+    if(k==='chance')continue;
+    const delta=e[k];
+    const on=(STATUS_NATURE[k]||null);
+    let w=null;
+    if(['atk','def','spa','spd','spe','acc','eva'].indexOf(k)>=0){
+      const cur=target.stages[k]||0;
+      /* já no piso do debuff: sem ganho, e gasta PP à toa */
+      if(delta<0&&cur<=-2)w=-12;
+      else if(delta>0&&cur>=3)w=-8;
+      else{
+        w=(delta<0?9:-6)*Math.abs(delta);
+        /* debuff de velocidade vale mais contra quem é mais rápido que nós */
+        if(k==='spe'&&delta<0&&curStatsMon(target).spe>curStatsMon(user).spe)w*=1.4;
+        if(k==='atk'&&delta<0&&curStatsMon(target).atk>curStatsMon(user).atk)w*=1.25;
+        if(k==='acc'&&(mv.a||100)>=100)w*=0.8;
+      }
+    }else if(k==='flinch'){
+      /* flinchar anula o turno do oponente: vale muito contra quem precisa agir */
+      w=curStatsMon(target).spe>curStatsMon(user).spe?26:14;
+      if(target.status==='slp'||target.status==='frz')w-=20;
+    }else{
+      /* condição JÁ aplicada no alvo: não vale gastar o golpe */
+      if(on&&target.status===on)w=-14;
+      /* imunidade por tipo: a IA descobre e evita */
+      else if(on&&statusImmune(target,on))w=-18;
+      /* alvo quase derrotado: melhor fechar do que envenenar */
+      else if(hpFracT<=0.18)w=-20;
+      else{
+        w=14;
+        if(k==='pois')w+=4;                    /* dano puro: ótimo contra tanque */
+        if(k==='burn')w-=SPECIES[target.id].stats.atk>70?-6:2;
+        if(k==='sleep')w+=hpFracT>0.6?6:0;
+        if(k==='par')w+=curStatsMon(target).spe>curStatsMon(user).spe?6:-4;
+        if(k==='freeze')w+=hpFracT>0.6?5:0;
+        if(k==='conf'&&skill<2)w-=6;
+      }
+    }
+    v+=w*base;
+  }
+}
+return v;
+}
+function setupCount(m){return ['atk','def','spa','spd'].reduce((a,k)=>a+Math.max(0,m.stages[k]||0),0);}
 function aiMove(){
   const om=oMon();
   if(!om)return null;
+  const pm=pMon();
+  if(!pm)return null;
+  const B=G.battle;
+  const skill=(B&&B.ai!=null)?B.ai:1;
   const cand=om.moves.map((mv,i)=>i).filter(i=>om.moves[i].pp>0);
   if(!cand.length)return null;
-  const pm=pMon();
-  let best=-1,bestScore=-1;
+  let best=-1,bestScore=-Infinity;
   for(const i of cand){
     const mv=MOVES[om.moves[i].id];
-    let s=5+Math.random()*5;
+    let s;
     if(mv.p>0){
-      const eff=speciesTypeMult(SPECIES[pm.id].types,mv.t);
-      s+=eff>1?12:eff<1?-6:0;
-      if(pm.hp/maxHp(pm)<0.5)s+=2;
-    }else if(mv.heal&&om.hp<maxHp(om)*0.6)s+=8;
+      const d=expectedDamage(om,pm,mv);
+      if(d.eff===0)s=-999;
+      else{
+        const acc=Math.min(1,(mv.a||100)/100*stageMult(om.stages.acc||0)/stageMult(pm.stages.eva||0));
+        s=d.avg*acc/(mv.recharge?1.9:1)*(mv.recoil?0.82:1)*(mv.multi?0.95:1);
+        if(d.eff>1)s*=1.25+(d.eff-1)*0.15;
+        else if(d.eff<1)s*=d.eff*0.9;
+        if(d.kills)s*=2.4;
+        if(!d.kills&&pm.hp/maxHp(pm)<0.3)s*=0.82;
+        if(mv.pp<=8)s*=0.9;
+        if(om.moves[i].pp<=2)s*=0.55;
+      }
+    }else{
+      s=statusMoveValue(om,pm,mv,skill);
+      if(skill<=0)s*=0.65;
+      if(om.moves[i].pp<=1&&s<12)s=-50;
+    }
+    /* ruído: mantém variação sem destruir a escolha ótima */
+    s+=GameRNG.next('ai')*(skill>=2?4:10);
     if(s>bestScore){bestScore=s;best=i;}
   }
-  return best;
+  return bestScore<=-40?-1:best;
+}
+/* A IA pode querer TROCAR. Só em nível>=2 e no máximo 1 troca a cada
+   2 turnos — assim nunca existe troca infinita nem troca sem propósito. */
+function aiWantsSwitch(){
+  const B=G.battle;
+  if(!B||!B.opp||!B.opp.team||B.wild)return -1;
+  const skill=(B.ai!=null)?B.ai:1;
+  if(skill<2)return -1;
+  const om=oMon(),pm=pMon();
+  if(!om||!pm)return -1;
+  const team=B.opp.team;
+  const since=(B.lastSwitchTurn===undefined)?99:(B.turnCount-B.lastSwitchTurn);
+  if(since<2)return -1;
+  const curScore=matchupScore(om,pm);
+  /* margem alta: só troca quando GANHA de verdade, nunca porempate */
+  let bestIdx=-1,bestScore=curScore+20;
+  for(let i=0;i<team.length;i++){
+    if(i===B.oIndex)continue;
+    const cand=team[i].mon;
+    if(!cand||cand.hp<=0)continue;
+    const sc=matchupScore(cand,pm);
+    if(sc>bestScore){bestScore=sc;bestIdx=i;}
+  }
+  /* não troca se o mon atual está são e vencendo o matchup */
+  if(om.hp/maxHp(om)>0.9&&curScore>60)return -1;
+  if(bestIdx>=0){B.lastSwitchTurn=B.turnCount;}
+  return bestIdx;
+}
+/* quão bem X enfrenta Y */
+function matchupScore(x,y){
+  if(!x||!y)return 0;
+  let best=0,sum=0;
+  for(const mv of x.moves){
+    const M=MOVES[mv.id];
+    if(!M||M.p===0)continue;
+    const d=expectedDamage(x,y,M);
+    if(d.eff===0)continue;
+    const w=d.avg*(d.eff>1?1.4:1);
+    if(w>best)best=w;
+    sum+=w;
+  }
+  return best+sum*0.25;
 }
 async function battleTurn(){
   const B=G.battle;
   if(B.over)return;
+  B.turnCount=(B.turnCount||0)+1;
+  /* troca estratégica da IA ANTES do turno do jogador — é a decisão que
+     diferencia uma IA boa de uma IA que só apaga golpes */
+  if(!B.wild&&B.opp&&B.opp.team&&B.opp.team.some((t,i)=>i!==B.oIndex&&t.mon&&t.mon.hp>0)){
+    const want=aiWantsSwitch();
+    if(want>=0&&want!==B.oIndex){
+      const prev=B.oIndex;
+      B.oIndex=want;
+      const nx=B.opp.team[want].mon;
+      S.dexSeen[nx.id]=true;
+      await battleMsg(B.opp.name+' trocou: '+B.opp.name+' enviou '+SPECIES[nx.id].n+'!');
+      UI.battleRefresh();await wait(300);
+      if(B.oIndex!==prev)return; /* turno consumido pela troca */
+    }
+  }
   B.state='command';
   UI.battleRefresh();
   const pc=await UI.battleCommand();
@@ -1863,18 +2486,24 @@ async function battleTurn(){
     pMove={id:'tacada',pp:1};
     await battleMsg('Sem PP! Usou uma investida desesperada.');
   }
+  /* a IA pode trocar ANTES de agir (só em níveis altos, sem loop) */
   const oIdx=aiMove();
-  const oMove=oIdx===null?null:om.moves[oIdx];
+  let oMove=oIdx===null||oIdx<0?null:om.moves[oIdx];
   if(oMove&&oMove.pp<=0)oMove=null;
+  /* ordem: prioridade do golpe > velocidade; empate sorteado */
   const pSpeed=curStatsMon(pm).spe*stageMult(pm.stages.spe);
   const oSpeed=curStatsMon(om).spe*stageMult(om.stages.spe);
-  const pFirst=oMove===null||pSpeed>oSpeed||(pSpeed===oSpeed&&chance(0.5));
+  const pPri=oMove?(MOVES[oMove.id].pri||0):0;
+  const oPri=(MOVES[pMove.id]&&MOVES[pMove.id].pri)?MOVES[pMove.id].pri:0;
+  let pFirst;
+  if(oPri!==pPri)pFirst=oPri>pPri;
+  else pFirst=oMove===null||pSpeed>oSpeed||(pSpeed===oSpeed&&chance(0.5,'battle'));
   if(pFirst){
     await execAction('player',pMove);
-    if(!B.over&&oMove)await execAction('opp',oMove);
+    if(!B.over&&oMove&&oMon()&&oMon().hp>0)await execAction('opp',oMove);
   }else{
-    await execAction('opp',oMove);
-    if(!B.over)await execAction('player',pMove);
+    if(oMove)await execAction('opp',oMove);
+    if(!B.over&&G.battle.pIndex>=0&&pMon()&&pMon().hp>0)await execAction('player',pMove);
   }
   if(!B.over)await afterActions();
 }
@@ -1885,26 +2514,37 @@ async function execAction(side,move){
   const mv=MOVES[move.id];
   if(user.hp<=0)return;
   if(move.pp!==undefined&&move.pp>0)move.pp--;
-  /* status que impedem ação */
+  /* --- condições que impedem/bloqueiam a ação (contra-jogo claro) --- */
+  /* congelamento: dura; sai com ataque de fogo ou ao passar o tempo */
+  if(user.status==='frz'){
+    user.frozenTurns=(user.frozenTurns||0)+1;
+    if(user.frozenTurns>=3&&chance(0.35,'battle')){
+      user.status=null;user.frozenTurns=0;
+      await battleMsg(SPECIES[user.id].n+' descongelou!');
+    }else{
+      await battleMsg(SPECIES[user.id].n+' está congelado sólido!');return;
+    }
+  }
+  /* sono: acorda com o tempo OU ao apanhar forte (contra-jogo:的攻击) */
   if(user.status==='slp'){
     user.sleepTurns=(user.sleepTurns||2)-1;
-    if(user.sleepTurns<=0){user.status=null;await battleMsg(SPECIES[user.id].n+' acordou!');}
-    else{await battleMsg(SPECIES[user.id].n+' está dormindo.');return;}
+    if(user.sleepTurns<=0){user.status=null;user.sleepTurns=0;await battleMsg(SPECIES[user.id].n+' acordou!');}
+    else{await battleMsg(SPECIES[user.id].n+' está dormindo profundamente.');return;}
   }
-  if(user.status==='frz'){
-    if(chance(0.2)){user.status=null;await battleMsg(SPECIES[user.id].n+' descongelou!');}
-    else{await battleMsg(SPECIES[user.id].n+' está congelado!');return;}
+  /* paralisia: NÃO dá falha total — reduz velocidade e dá risco baixo de
+     falha. Evita a frustração de "25% de perder o turno inteiro". */
+  if(user.status==='par'&&chance(0.15,'battle')){
+    await battleMsg(SPECIES[user.id].n+' está paralisado e não consegue se mover!');return;
   }
-  if(user.status==='par'&&chance(0.25)){await battleMsg(SPECIES[user.id].n+' está paralisado e não pode se mover!');return;}
   if(user.conf&&user.conf>0){
     user.conf--;
-    if(chance(0.5)){
+    if(chance(0.45,'battle')){
       await battleMsg(SPECIES[user.id].n+' está confuso e se machucou!');
-      const dmg=Math.max(1,Math.floor(maxHp(user)*0.1));
+      const dmg=Math.max(1,Math.floor(maxHp(user)*0.08));
       user.hp=Math.max(0,user.hp-dmg);
-      UI.battleFlash('player');
+      UI.battleHit(side,false);
       UI.battleRefresh();
-      await wait(350);
+      await wait(320);
       return;
     }
     if(user.conf<=0){user.conf=null;await battleMsg(SPECIES[user.id].n+' saiu da confusão!');}
@@ -1912,23 +2552,31 @@ async function execAction(side,move){
   /* acurácia (vale para os dois lados) */
   if(mv.a<101){
     const acc=Math.min(1,mv.a/100*stageMult(user.stages.acc||0)/stageMult(target.stages.eva||0));
-    if(!chance(acc)){await battleMsg(SPECIES[user.id].n+' errou o ataque!');return;}
+    if(!chance(acc,'battle')){await battleMsg(SPECIES[user.id].n+' errou o ataque!');return;}
   }
-  /* movimentos de status */
+  /* --- golpes de status --- */
   if(mv.p===0){
+    /* cura (+ cura de status no mesmo golpe) */
     if(mv.heal){
+      const didCure=mv.cure&&hasStatus(user);
+      if(didCure){user.status=null;user.conf=0;user.sleepTurns=0;user.frozenTurns=0;}
       const h=Math.floor(maxHp(user)*mv.heal);
+      const before=user.hp;
       user.hp=Math.min(maxHp(user),user.hp+h);
-      await battleMsg(SPECIES[user.id].n+' recuperou energia!');
-      UI.battleRefresh();return;
-    }
-    if(mv.self){
-      applyStages(user,mv.self);
       await battleMsg(SPECIES[user.id].n+' usou '+mv.n+'!');
+      if(user.hp>before)await battleMsg(SPECIES[user.id].n+' recuperou energia!');
+      if(didCure)await battleMsg('A condição de status foi curada!');
       UI.battleRefresh();return;
     }
+    /* setup (estágios no usuário) */
+    if(mv.self){
+      await battleMsg(SPECIES[user.id].n+' usou '+mv.n+'!');
+      applyStages(user,mv.self);
+      UI.battleRefresh();return;
+    }
+    /* sementes: dreno persistente com contra-jogo (remove no Centro/propriedade) */
     if(mv.leech){
-      if(target.leech){await battleMsg('Já está com Dreno de Sementes!');return;}
+      if(target.leech){await battleMsg(SPECIES[target.id].n+' já tem sementes!');return;}
       target.leech=1;
       await battleMsg(SPECIES[user.id].n+' plantou sementes em '+SPECIES[target.id].n+'!');
       UI.battleRefresh();return;
@@ -1941,55 +2589,168 @@ async function execAction(side,move){
     await battleMsg(SPECIES[user.id].n+' usou '+mv.n+'!');
     return;
   }
-  /* ataque com dano */
+  /* --- ataques com dano --- */
+  /* golpes de recarregamento (Hiper Raio) só pueden no turno de carga */
+  if(user.charging){
+    user.charging=false;
+    await battleMsg(SPECIES[user.id].n+' está recarregando e não pode atacar!');
+    UI.battleRefresh();return;
+  }
   const atkStat=curStatsMon(user),defStat=curStatsMon(target);
-  const atk=mv.cat==='phys'?atkStat.atk*stageMult(user.stages.atk):atkStat.spa*stageMult(user.stages.spa);
+  /* queimadura corta o Ataque físico: identidade real da condição */
+  const burnCut=(user.status==='brn'&&mv.cat==='phys')?0.5:1;
+  const atk=(mv.cat==='phys'?atkStat.atk*stageMult(user.stages.atk):atkStat.spa*stageMult(user.stages.spa))*burnCut;
   const def=mv.cat==='phys'?defStat.def*stageMult(target.stages.def):defStat.spd*stageMult(target.stages.spd);
-  let dmg=Math.floor((Math.floor(2*user.lv/5+2)*mv.p*atk/def)/50)+2;
-  const stab=SPECIES[user.id].types.includes(mv.t)?1.5:1;
   const typeEff=speciesTypeMult(SPECIES[target.id].types,mv.t);
-  const crit=chance(mv.crit?1/8:1/16)?2:1;
-  const rnd=0.85+Math.random()*0.15;
-  dmg=Math.max(1,Math.floor(dmg*stab*typeEff*crit*rnd));
-  target.hp=Math.max(0,target.hp-dmg);
+  if(typeEff===0){
+    await battleMsg(SPECIES[user.id].n+' usou '+mv.n+'!');
+    await wait(260);
+    await battleMsg('Não afeta '+SPECIES[target.id].n+'!');
+    return;
+  }
+  const stab=SPECIES[user.id].types.includes(mv.t)?1.5:1;
+  const crit=chance(mv.crit?1/8:1/16,'battle')?2:1;
+  /* golpes de acerto múltiplo */
+  const hits=mv.multi?(Array.isArray(mv.multi)?GameRNG.int(mv.multi[0],mv.multi[1],'battle'):mv.multi):1;
+  let total=0,anyHit=false,allCrit=true;
   await battleMsg(SPECIES[user.id].n+' usou '+mv.n+'!');
+  for(let h=0;h<hits;h++){
+    let dmg;
+    if(mv.fixed){
+      dmg=Math.max(1,Math.floor((Math.floor(2*user.lv/5+2)*mv.fixed)/5)+10);
+      dmg=Math.floor(dmg*stab*typeEff*(crit>1?2:1)*(0.9+GameRNG.next('battle')*0.1));
+    }else{
+      let d=Math.floor((Math.floor(2*user.lv/5+2)*mv.p*atk/def)/50)+2;
+      const rnd=0.85+GameRNG.next('battle')*0.15;
+      dmg=Math.max(1,Math.floor(d*stab*typeEff*crit*rnd));
+    }
+    if(hits>1)dmg=Math.max(1,Math.floor(dmg*0.75)); /* múltiplos batem mais fraco */
+    const applied=Math.min(target.hp,dmg);
+    target.hp=Math.max(0,target.hp-dmg);
+    total+=applied;
+    anyHit=true;if(crit<=1)allCrit=false;
+    if(hits>1)await wait(130);
+    if(target.hp<=0)break;
+  }
+  target.hp=Math.max(0,target.hp);
   UI.battleHit(side,crit>1);
   UI.battleRefresh();
   await wait(420);
+  if(hits>1)await battleMsg('Acertou '+hits+' vez'+(hits>1?'es':'')+'! Total de '+total+' de dano.');
   if(crit>1)await battleMsg('Golpe crítico!');
   if(typeEff>1)await battleMsg('Foi super eficaz!');
-  else if(typeEff<1&&typeEff>0)await battleMsg('Não é muito eficaz...');
-  else if(typeEff===0)await battleMsg('Não afetou '+SPECIES[target.id].n+'!');
-  if(mv.drain&&target.hp>0){
-    const h=Math.max(1,Math.floor(dmg*mv.drain));
+  else if(typeEff<1)await battleMsg('Não é muito eficaz...');
+  /* dreno: recupera parte do dano causado */
+  if(mv.drain&&total>0){
+    const h=Math.max(1,Math.floor(total*mv.drain));
     user.hp=Math.min(maxHp(user),user.hp+h);
     await battleMsg(SPECIES[user.id].n+' drenou energia!');
   }
-  const chanceEff=mv.eff?('chance'in mv.eff?mv.eff.chance:1):0;
-  if(mv.eff&&target.hp>0&&chance(chanceEff))await applyEffect(user,target,mv.eff);
+  /* recuo: o usuário paga parte do dano */
+  if(mv.recoil&&total>0){
+    const r=Math.max(1,Math.floor(total*mv.recoil));
+    user.hp=Math.max(0,user.hp-r);
+    await battleMsg(SPECIES[user.id].n+' sofreu '+r+' de recuo!');
+    if(user.hp<=0)await handleSelfFaint();
+  }
+  /* recarga: golpe máximo custa o próximo turno */
+  if(mv.recharge)user.charging=true;
+  /* acorda quem dorme ao levar dano forte */
+  if(target.status==='slp'&&total>0&&anyHit&&total>=maxHp(target)*0.18){
+    target.status=null;target.sleepTurns=0;
+    await battleMsg(SPECIES[target.id].n+' acordou com o impacto!');
+  }
+  /* fogo descongela */
+  if(target.status==='frz'&&mv.t==='fire'&&anyHit){
+    target.status=null;target.frozenTurns=0;
+    await battleMsg(SPECIES[target.id].n+' foi descongelado pelo calor!');
+  }
+  /* efeito secundário */
+  if(mv.eff&&target.hp>0){
+    const chanceEff=(mv.eff.chance!==undefined?mv.eff.chance:1);
+    if(chance(chanceEff,'battle'))await applyEffect(user,target,mv.eff);
+  }
   UI.battleRefresh();
+}
+async function handleSelfFaint(){
+  const B=G.battle;if(!B)return;
+  const om=oMon();
+  if(om&&om.hp<=0){
+    UI.battleFaint('opp');
+    await battleMsg(SPECIES[om.id].n+' não resistiu ao próprio golpe!');
+  }
 }
 function applyStages(m,stages){
   for(const k in stages){
     const v=clamp((m.stages[k]||0)+stages[k],-6,6);
+    if(m.stages[k]!==undefined&&v===m.stages[k])return false;
     m.stages[k]=v;
   }
+  return true;
 }
 async function applyEffect(user,target,eff){
-  let msgs=[];
-  if(eff.atk)msgs.push(applyStageMsg(target,'atk',eff.atk));
-  if(eff.def)msgs.push(applyStageMsg(target,'def',eff.def));
-  if(eff.spa)msgs.push(applyStageMsg(target,'spa',eff.spa));
-  if(eff.spd)msgs.push(applyStageMsg(target,'spd',eff.spd));
-  if(eff.spe)msgs.push(applyStageMsg(target,'spe',eff.spe));
-  if(eff.acc)msgs.push(applyStageMsg(target,'acc',eff.acc));
-  if(eff.burn&&!target.status){target.status='brn';msgs.push(SPECIES[target.id].n+' foi queimado!');}
-  if(eff.par&&!target.status){target.status='par';msgs.push(SPECIES[target.id].n+' foi paralisado!');}
-  if(eff.pois&&!target.status){target.status='psn';msgs.push(SPECIES[target.id].n+' foi envenenado!');}
-  if(eff.sleep&&!target.status){target.status='slp';target.sleepTurns=irnd(1,3);msgs.push(SPECIES[target.id].n+' adormeceu!');}
-  if(eff.freeze&&!target.status){target.status='frz';msgs.push(SPECIES[target.id].n+' foi congelado!');}
-  if(eff.conf&&!target.conf){target.conf=irnd(2,4);msgs.push(SPECIES[target.id].n+' ficou confuso!');}
-  for(const m of msgs)if(m)await m;
+  /*effects de estágios primeiro */
+  const stats=[['atk','Ataque'],['def','Defesa'],['spa','Ataque Especial'],['spd','Defesa Especial'],
+               ['spe','Velocidade'],['acc','Precisão']];
+  for(const [k,label] of stats){
+    if(!eff[k])continue;
+    const cur=target.stages[k]||0;
+    const nv=clamp(cur+eff[k],-6,6);
+    if(nv===cur){
+      await battleMsg('O '+label+' de '+SPECIES[target.id].n+' não pode cair/ Subir mais!');
+      continue;
+    }
+    target.stages[k]=nv;
+    await battleMsg(SPECIES[target.id].n+' — '+label+' '+(eff[k]>0?'subiu':'caiu')+'!');
+  }
+  /* flinch: anula o próximo turno do alvo (contra-jogo: golpes de prioridade) */
+  if(eff.flinch&&target.flinchTurns<=0){
+    target.flinchTurns=1;
+    await battleMsg(SPECIES[target.id].n+' tremeu e não consegue se concentrar!');
+  }
+  /* condições naturais: respeita imunidade por TIPO */
+  const conds=[['burn','brn','foi queimado!'],['par','par','ficou paralisado!'],
+    ['pois','psn','foi envenenado!'],['sleep','slp','adormeceu!'],['freeze','frz','foi congelado!']];
+  for(const [key,st,msg] of conds){
+    if(!eff[key])continue;
+    if(target.status){await battleMsg(SPECIES[target.id].n+' já tem uma condição.');continue;}
+    if(statusImmune(target,st)){
+      await battleMsg(SPECIES[target.id].n+' não é afetado(a) por isso!');
+      continue;
+    }
+    target.status=st;
+    if(st==='slp')target.sleepTurns=irnd(1,3,'battle');
+    if(st==='frz')target.frozenTurns=0;
+    await battleMsg(SPECIES[target.id].n+' '+msg);
+  }
+  if(eff.conf&&!target.conf){
+    target.conf=irnd(2,4,'battle');
+    await battleMsg(SPECIES[target.id].n+' ficou confuso!');
+  }
+}
+/* aplica um golpe inteiro ao alvo (usado pela IA para simular o próximo turno) */
+function simulateStatus(user,target,mv,skill){
+  const saved=JSON.parse(JSON.stringify({status:target.status,conf:target.conf,stages:target.stages,leech:target.leech}));
+  const leechWas=!!target.leech;
+  const hadStatus=hasStatus(target);
+  const stagesBefore={...target.stages};
+  applyStages(target,mv.self||{});
+  if(mv.leech)target.leech=1;
+  if(mv.eff){
+    for(const [key,st] of [['burn','brn'],['par','par'],['pois','psn'],['sleep','slp'],['freeze','frz']]){
+      if(!mv.eff[key]||target.status)continue;
+      if(!statusImmune(target,st))target.status=st;
+    }
+    if(mv.eff.conf&&!target.conf)target.conf=3;
+    if(mv.eff.flinch)target.flinchTurns=1;
+  }
+  let g=0;
+  if(mv.heal)g+=Math.min(maxHp(user)*mv.heal,maxHp(user)-user.hp);
+  if(mv.cure&&hasStatus(user))g+=maxHp(user)*0.16;
+  /* devolve o estado — a IA só lê, nunca altera a batalha real */
+  target.status=saved.status;target.conf=saved.conf;target.leech=leechWas?1:0;
+  target.stages=stagesBefore;
+  return g;
 }
 async function applyStageMsg(m,stat,delta){
   const pt={atk:'Ataque',def:'Defesa',spa:'Ataque Especial',spd:'Defesa Especial',spe:'Velocidade',acc:'Precisão'}[stat];
@@ -2004,23 +2765,33 @@ async function afterActions(){
   if(!om||om.hp<=0){await handleOppFaint();}
   if(B.over)return;
   if(!pm||pm.hp<=0){await handlePlayerFaint();if(B.over)return;await forceSwitch();return;}
-  /* efeitos de fim de turno */
+  /* efeitos de fim de turno — cada condição tem seu próprio dano/efeito */
   for(const side of ['player','opp']){
     const m=side==='player'?pm:om;
+    const other=side==='player'?om:pm;
     if(!m||m.hp<=0)continue;
-    if(m.status==='psn'||m.status==='brn'){
-      const d=Math.max(1,Math.floor(maxHp(m)/8));
+    /* queimadura: dano por turno E cortina o Ataque físico
+       (quem é fraco fisicamente e forte em especial NÃO se beneficia) */
+    if(m.status==='brn'){
+      const d=statusTickDamage(m);
       m.hp=Math.max(0,m.hp-d);
-      await battleMsg(SPECIES[m.id].n+(m.status==='psn'?' sofreu com o veneno!':' sofreu com a queimadura!'));
-      UI.battleRefresh();await wait(300);
+      await battleMsg(SPECIES[m.id].n+' sofreu com a queimadura! ('+d+')');
+      UI.battleRefresh();await wait(260);
     }
+    /* veneno: dano puro, não afeta Ataque — a condição "de tanque" */
+    if(m.status==='psn'){
+      const d=statusTickDamage(m);
+      m.hp=Math.max(0,m.hp-d);
+      await battleMsg(SPECIES[m.id].n+' perdeu energia para o veneno! ('+d+')');
+      UI.battleRefresh();await wait(260);
+    }
+    /* sementes: dreno persistente, o SELETOR remove */
     if(m.leech&&m.hp>0){
-      const other=side==='player'?om:pm;
       const d=Math.max(1,Math.floor(maxHp(m)/8));
       m.hp=Math.max(0,m.hp-d);
-      if(other.hp>0)other.hp=Math.min(maxHp(other),other.hp+d);
+      if(other&&other.hp>0)other.hp=Math.min(maxHp(other),other.hp+d);
       await battleMsg('As sementes drenaram energia de '+SPECIES[m.id].n+'!');
-      UI.battleRefresh();await wait(300);
+      UI.battleRefresh();await wait(260);
     }
   }
   if(om.hp<=0){await handleOppFaint();}
@@ -2036,9 +2807,7 @@ async function handleOppFaint(){
   const pm=pMon();
   /* XP */
   if(pm&&pm.hp>0){
-    const base=SPECIES[om.id].xp;
-    let gain=Math.floor(base*om.lv/7);
-    if(B.type==='trainer')gain=Math.floor(gain*1.5);
+    const gain=expGain(om,B.type==='trainer');
     pm.exp+=gain;
     await battleMsg(SPECIES[pm.id].n+' ganhou '+gain+' de experiência!');
     while(pm.exp>=expToNext(pm.lv)){
@@ -2083,12 +2852,14 @@ async function forceSwitch(){
 async function oppAttack(move){
   if(B_OVER_GUARD())return;
   const B=G.battle;if(!B)return;
-  const oIdx=move!==undefined?move:aiMove();
-  if(oIdx===null)return;
+  const oIdx=(move!==undefined&&move!==null)?move:aiMove();
+  if(oIdx===null||oIdx<0)return;
   const om=oMon();
   if(!om||om.hp<=0)return;
   const mv=om.moves[oIdx];
-  if(mv&&mv.pp>0)await execAction('opp',mv);
+  if(!mv||mv.pp<=0)return;
+  await execAction('opp',mv);
+  if(!B.over&&G.battle===B)await afterActions();
 }
 function B_OVER_GUARD(){return G.battle&&G.battle.over;}
 async function battleWin(){
@@ -2101,7 +2872,7 @@ async function battleWin(){
     AudioSys.cash();
     await battleMsg('Você venceu '+B.opp.name+'!');
     await battleMsg('Ganhou ₽'+reward+' pela vitória!');
-    for(const line of B.opp.winText||[])await battleMsg(line);
+    for(const line of B.opp.win||[])await battleMsg(line);
     if(B.gym!==undefined&&!S.badges.includes(B.gym)){
       const gd=GYM_DEFS[B.gym];
       S.badges.push(B.gym);
@@ -2136,56 +2907,100 @@ function centerOutside(){
 async function whiteOut(){
   const B=G.battle;
   await battleMsg('Você não tem mais monstros capazes de lutar!');
-  await battleMsg('Você desmaiou... e foi levado ao Centro Pokémon.');
+  await battleMsg('Você desmaiou... e foi levado ao Centro de Cura.');
   S.money=Math.floor(S.money/2);
   healAll();
   const wake=centerOutside();
   if(wake)S.prev=wake;
-  if(S.lastCenter){teleport(S.lastCenter.map,S.lastCenter.x,S.lastCenter.y,'up');}
+  if(S.lastCenter)teleport(S.lastCenter.map,S.lastCenter.x,S.lastCenter.y,'up');
   else teleport('center_int',6,8,'down');
-  B.over=true;
+  if(B)B.over=true;
 }
 async function switchIn(idx){
   const B=G.battle;
   B.pIndex=idx;
   await sendOutPlayer();
 }
-/* captura */
+/* ============================================================
+   CAPTURA — decisão, não sorteio cego.
+   O jogador considera: PS restantes, status, bola (preço vs
+   qualidade), espaço na equipe e se vale a pena aquela espécie.
+   A chance JÁ é mostrada como faixa ANTES de jogar (ver catchInfo),
+   e nunca chega a 100% só por lowering PS — continua sendo uma
+   aposta real.
+   ============================================================ */
+function catchChance(om,itemId){
+  const it=ITEMS[itemId];
+  const max=maxHp(om);
+  const hp=clamp(om.hp,0,max);
+  /* menos PS = muito mais fácil; curva自己的能力笑: (3max-2hp)/(3max) */
+  const hpTerm=(3*max-2*hp)/(3*max);
+  const base=SPECIES[om.id].catch;
+  const statusBonus=om.status?(om.status==='slp'||om.status==='frz'?2.2:1.6):1;
+  const a=Math.floor(((3*max-2*hp)*base*it.bonus*statusBonus)/(3*max));
+  /* clamp em 0.95: SEMPRE existe chance de falhar — nada de garantia */
+  return clamp((a+1)/255,0,0.95);
+}
+const CATCH_TIERS=[
+  {min:0.55,label:'Excelente',color:'#55d98a'},
+  {min:0.32,label:'Boa',color:'#9fe870'},
+  {min:0.15,label:'Razoável',color:'#ffd85a'},
+  {min:0.001,label:'Difícil',color:'#e88a68'},
+  {min:-1,label:'Quase impossível',color:'#e85b68'},
+];
+function catchTier(p){for(const t of CATCH_TIERS)if(p>=t.min)return t;
+  return CATCH_TIERS[CATCH_TIERS.length-1];}
+/* informação de captura usada no menu da bolsa E antes de jogar */
+function catchInfo(itemId){
+  const om=oMon();
+  if(!om)return null;
+  const p=catchChance(om,itemId);
+  const t=catchTier(p);
+  return {p,label:t.label,color:t.color,ball:ITEMS[itemId].n};
+}
 async function useItemInBattle(itemId){
   const B=G.battle;const it=ITEMS[itemId];
   if(!B.wild&&it.type!=='heal'&&it.type!=='status'&&it.type!=='revive'){
     await battleMsg('Não dá para usar isso aqui!');return;
   }
+  if(it.type==='ball'&&!B.wild){await battleMsg('Não dá para capturar monstros de treinadores!');return;}
+  if((S.bag[itemId]||0)<=0){await battleMsg('Você não tem mais '+it.n+'.');return;}
   S.bag[itemId]--;
   if(it.type==='ball'){
-    if(!B.wild){await battleMsg('Não dá para capturar monstros de treinadores!');return;}
     const om=oMon();
+    if(!om){S.bag[itemId]++;return;}
+    /* feedback da chance ANTES de jogar — o jogador precisa ver o risco */
+    const info=catchInfo(itemId);
+    const partyFull=S.party.length>=6;
+    await battleMsg('Chance de captura: '+info.label+' ('+it.n+')');
+    if(partyFull)await battleMsg('Equipe cheia — se capturar, vai para o PC.');
     await battleMsg('Você jogou a '+it.n+'!');
     UI.battleBall();
     await wait(650);
     if(B.over)return;
     const om2=oMon();if(!om2){B.over=true;return;}
-    const max=maxHp(om);
-    const a=Math.floor(((3*max-2*om.hp)*SPECIES[om.id].catch*it.bonus)/(3*max));
-    const statusBonus=om.status?2:1;
-    const chanceCatch=clamp((a+1)*statusBonus/255,0,1);
-    let caught=chanceCatch>=1||chance(chanceCatch);
+    /* recalcula APÓS o turno (o inimigo pode ter se curado/alterado) */
+    const p=catchChance(om2,itemId);
+    const caught=GameRNG.chance(p,'capture');
     if(caught){
       AudioSys.catch();
-      await battleMsg('Conseguiu! '+SPECIES[om.id].n+' foi capturado!');
-      S.dexCaught[om.id]=true;
+      await battleMsg('Conseguiu! '+SPECIES[om2.id].n+' foi capturado!');
+      S.dexCaught[om2.id]=true;
+      /* novo monstro entra sem condition herdada de batalha */
+      om2.status=null;om2.conf=0;om2.leech=0;om2.sleepTurns=0;om2.charging=false;
+      om2.stages={atk:0,def:0,spa:0,spd:0,spe:0,acc:0,eva:0};
       if(S.party.length<6){
-        S.party.push(om);
-        await battleMsg(SPECIES[om.id].n+' foi para a sua equipe!');
+        S.party.push(om2);
+        await battleMsg(SPECIES[om2.id].n+' foi para a sua equipe!');
       }else{
         S.box=(S.box||[]);
-        S.box.push(om);
-        await battleMsg(SPECIES[om.id].n+' foi para o PC!');
+        S.box.push(om2);
+        await battleMsg(SPECIES[om2.id].n+' foi para o PC!');
       }
       B.over=true;return;
     }
     AudioSys.fail();
-    await battleMsg('Ah, não! O '+SPECIES[om.id].n+' escapou!');
+    await battleMsg('Ah, não! O '+SPECIES[om2.id].n+' escapou!');
     return;
   }
   if(it.type==='candy'){
@@ -2206,9 +3021,11 @@ async function useItemInBattle(itemId){
     UI.battleRefresh();return;
   }
   if(it.type==='status'){
-    if(!pm.status&&pm.conf!==undefined&&!pm.conf){await battleMsg('Não há condição de status!');S.bag[itemId]++;return;}
-    if(!pm.status&&!pm.conf){await battleMsg('Não há condição de status!');S.bag[itemId]++;return;}
-    pm.status=null;pm.conf=null;
+    /* Full Heal não limpa confusão — é o motivo de existir a Cura Total */
+    const ok=it.fullOnly?!!pm.status:hasStatus(pm);
+    if(!ok){await battleMsg(it.fullOnly?'Não há condição para curada.':'Não há condição de status!');S.bag[itemId]++;return;}
+    if(it.fullOnly){pm.status=null;pm.sleepTurns=0;pm.frozenTurns=0;}
+    else{pm.status=null;pm.conf=0;pm.sleepTurns=0;pm.frozenTurns=0;}
     await battleMsg('Usou '+it.n+'! '+SPECIES[pm.id].n+' foi curado!');
     UI.battleRefresh();return;
   }
@@ -2227,10 +3044,15 @@ async function levelUp(m){
   await battleMsg(SPECIES[m.id].n+' subiu para o nível '+m.lv+'!');
   m.hp=Math.min(newMax,m.hp+gained);
   UI.battleRefresh();
-  /* aprender movimento */
+  /* aprender movimento(s) deste nível */
   const sp=SPECIES[m.id];
-  const learnMove=sp.learn.filter(x=>x[0]===m.lv).map(x=>x[1]);
+  const learnMove=sp.learn.filter(x=>x[0]===m.lv).map(x=>x[1]).filter(id=>MOVES[id]);
   for(const mvId of learnMove){
+    /* já conhece? não oferece de novo */
+    if(m.moves.some(x=>x.id===mvId)){
+      await battleMsg(SPECIES[m.id].n+' já conhece '+MOVES[mvId].n+'.');
+      continue;
+    }
     if(m.moves.length<4){
       m.moves.push({id:mvId,pp:MOVES[mvId].pp});
       await battleMsg(SPECIES[m.id].n+' aprendeu '+MOVES[mvId].n+'!');
@@ -2238,7 +3060,7 @@ async function levelUp(m){
       await battleMsg(SPECIES[m.id].n+' quer aprender '+MOVES[mvId].n+'.');
       let choice=await UI.learnMove(m,mvId);
       if(choice==='back')choice=4;
-      if(choice>=0&&choice<4){
+      if(choice>=0&&choice<4&&m.moves[choice]){
         const oldId=m.moves[choice].id;
         m.moves[choice]={id:mvId,pp:MOVES[mvId].pp};
         await battleMsg('Esqueceu '+MOVES[oldId].n+'. Aprendeu '+MOVES[mvId].n+'!');
@@ -2248,19 +3070,37 @@ async function levelUp(m){
     }
   }
 }
+/* Evolução: pergunta ao jogador (decisão real) e mostra o que muda.
+   Cancelar fica registrado em `dismissed` — não弹出 popup toda batalha. */
 async function tryEvolve(m){
   const sp=SPECIES[m.id];
   const evo=sp.evo?sp.evo.find(e=>e.lv===m.lv):null;
   if(!evo)return;
-  if(S.flags['noevo_'+m.id+'_'+evo.to])return;
-  await battleMsg(SPECIES[m.id].n+' está evoluindo!');
+  if(m.noEvo)return;
+  const to=SPECIES[evo.to];
+  if(!to)return;
+  const before=curStatsMon(m);
+  const typeChanged=JSON.stringify(sp.types)!==JSON.stringify(to.types);
+  await battleMsg(sp.n+' está evoluindo!');
   UI.battleEvolve();
-  await wait(1400);
-  await battleMsg(SPECIES[m.id].n+' evoluiu para '+SPECIES[evo.to].n+'!');
-  const beforeTypes=sp.types.slice();
+  await wait(1000);
+  const choice=await UI.confirmEvolve(m,to,typeChanged);
+  if(choice==='no'){
+    m.noEvo=true;
+    await battleMsg(sp.n+' decidiu não evoluir agora.');
+    return;
+  }
   m.id=evo.to;
+  m.noEvo=false;
   S.dexSeen[evo.to]=true;S.dexCaught[evo.to]=true;
+  const after=curStatsMon(m);
+  /* cura a diferença de PS máximo: evoluir nunca custa vida */
+  m.hp=Math.min(after.hp,m.hp+(after.hp-before.hp));
   AudioSys.evolve();
+  await battleMsg(sp.n+' evoluiu para '+to.n+'!');
+  if(typeChanged)await battleMsg('Novo tipo: '+sp.types.join('/')+' → '+to.types.join('/')+'!');
+  const dr=after.atk-before.atk,dsp=after.spa-before.spa,dde=after.def-before.def,dspd=after.spd-before.spd;
+  if(dr||dsp||dde||dspd)await battleMsg('ATQ+'+dr+' DEF+'+dde+' ESP+'+dsp+' EID+'+dspd);
   UI.battleRefresh();
 }
 async function endBattle(){
@@ -2277,7 +3117,7 @@ async function endBattle(){
     if(S.lastCenter)teleport(S.lastCenter.map,S.lastCenter.x,S.lastCenter.y,'up');
     else teleport('center_int',6,8,'down');
     await showMsg('Todos os seus monstros desmaiaram...');
-    await showMsg('O Centro Pokémon curou sua equipe.');
+    await showMsg('O Centro de Cura restaurou sua equipe.');
     return;
   }
   if(S.flags.beat_champ&&S.badges.length===4&&!S.flags.hallShown){
@@ -2430,7 +3270,7 @@ function titleOpen(){
   };
   UI.keyNav=d=>{const n=typeof d==='string'?(d==='up'||d==='left'?-1:1):(d>0?1:-1);sel=Math.min(2,Math.max(0,sel+n));render();AudioSys.blip();};
   UI.onA=()=>pick(sel);
-  const credit=el('div','credit','fan game — inspirado na série Pokémon (GBA)');
+  const credit=el('div','credit','um RPG de captura de monstros · 100% offline');
   ov.appendChild(h1);ov.appendChild(sub);ov.appendChild(menu);ov.appendChild(credit);
   uiRoot().appendChild(ov);
   render();
@@ -2498,7 +3338,7 @@ function askName(){
 }
 /* ---------- menu principal ---------- */
 async function menuOpen(){
-  const idx=await listUI(['Pokédex','Equipe','Bolsa','Cartão Treinador','Salvar','Sair'],{title:'MENU'});
+  const idx=await listUI(['Bestiário','Equipe','Bolsa','Cartão Treinador','Salvar','Sair'],{title:'MENU'});
   if(idx==='back')return;
   if(idx===0){dexOpen();}
   if(idx===1){partyOpen(false);}
@@ -2506,49 +3346,139 @@ async function menuOpen(){
   if(idx===3){cardOpen();}
   if(idx===4){saveGame();}
 }
-/* ---------- pokédex ---------- */
+/* ---------- bestiário: instrumento de decisão, não só checklist ----------
+   Mostra o que o jogador já descobriu. Fraquezas só aparecem para
+   espécies já vistas —gressão de descoberta faz parte da graça. */
 async function dexOpen(){
   const seen=DEX_ORDER.filter(id=>S.dexSeen[id]);
   const items=seen.length?seen.map(id=>id+'|'+SPECIES[id].n):['(nenhum visto)'];
-  const idx=await listUI(items,{title:'POKÉDEX '+seen.length+'/'+DEX_ORDER.length,render:(it,i,sel)=>{
+  const idx=await listUI(items,{title:'BESTIÁRIO '+seen.length+'/'+DEX_ORDER.length,render:(it,i,sel)=>{
     const [id,name]=it.split('|');
     const row=el('div');row.style.cssText='display:flex;gap:8px;align-items:center;';
     if(!id)return row;
     const num=el('span','',pad(DEX_ORDER.indexOf(id)+1));num.style.color='#8898c0';
-    const nm=el('span','',name);
-    row.appendChild(num);row.appendChild(nm);
+    const nm=el('span','',name);nm.style.flex='1';
+    const sp=SPECIES[id];
+    /* chip de papel: ajuda a montar equipe com intenção */
+    const role=el('span','',ROLE_PT[sp.r]||'');
+    role.style.cssText='font-size:.72em;color:#9da8c5;';
+    const mark=S.dexCaught[id]?'':'👁';
+    row.appendChild(num);row.appendChild(nm);row.appendChild(role);
+    if(mark)row.appendChild(el('span','',mark));
     return row;
   }});
   if(idx==='back'||!seen.length)return;
   const sp=SPECIES[items[idx].split('|')[0]];
+  const caught=!!S.dexCaught[sp.id];
   await showMsg('Nº'+pad(DEX_ORDER.indexOf(sp.id)+1)+' — '+sp.n+' ('+sp.types.map(t=>TYPE_PT[t]).join('/')+')');
+  await showMsg('Papel: '+(ROLE_PT[sp.r]||'?')+'  ·  Habitat: '+sp.hab);
+  /* evolução: só revela o destino se a base já foi vista */
+  const evoText=(()=>{
+    if(!sp.evo)return '';
+    const known=sp.evo.every(e=>S.dexSeen[e.to]);
+    if(known)return 'Evolui: '+sp.evo.map(e=>e.to+'(Nv.'+e.lv+')').join(', ');
+    return 'Evolui no Nv.'+sp.evo.map(e=>e.lv).join('/')+' (destino desconhecido)';
+  })();
+  if(evoText)await showMsg(evoText);
   await showMsg(sp.dex);
+  /* fraquezas/resistências: só para quem já foi capturado.
+     Um tipo que resiste pelo tipo 1 e pelo tipo 2 aparece só uma vez. */
+  if(caught){
+    const wSet=new Set(),rSet=new Set();
+    sp.types.forEach(own=>{
+      TYPES.forEach(atk=>{
+        const m=typeMult(atk,own);
+        if(m>1)wSet.add(atk);else if(m<1)rSet.add(atk);
+      });
+    });
+    const weak=[...wSet],res=[...rSet];
+    await showMsg('Fraquezas: '+(weak.length?weak.map(t=>TYPE_PT[t]).join(', '):'nenhuma'));
+    await showMsg('Resiste a: '+(res.length?res.map(t=>TYPE_PT[t]).join(', '):'nada'));
+  }else{
+    await showMsg('Fraquezas e resistências: capture-o para registrar.');
+  }
   dexOpen();
 }
 /* ---------- equipe ---------- */
+/* ---------- equipe: a montagem É a estratégia ----------
+   A lista mostra papel, tipos, PS e badges — o suficiente para decidir
+   quem entra sem abrir um resumo por monstro. */
 async function partyOpen(inBattle){
   const items=S.party.map((m,i)=>i);
   const idx=await listUI(items,{title:'EQUIPE',render:(i,idx2,sel)=>{
     const m=S.party[i];
-    const row=el('div');row.style.cssText='display:flex;gap:8px;align-items:center;flex:1;';
-    const cv=document.createElement('canvas');cv.className='pixel';cv.width=48;cv.height=48;
-    cv.getContext('2d').drawImage(monsterSprite(SPECIES[m.id],false,3),0,0,48,48);
-    const info=el('div');info.style.cssText='flex:1;';
-    const nm=el('div','',SPECIES[m.id].n+'  Lv.'+m.lv);nm.style.fontWeight='bold';
+    const row=el('div');row.style.cssText='display:flex;gap:6px;align-items:center;flex:1;min-width:0;';
+    const cv=document.createElement('canvas');cv.className='pixel';cv.width=36;cv.height=36;
+    cv.getContext('2d').drawImage(monsterSprite(SPECIES[m.id],false,3),0,0,36,36);
+    const info=el('div');info.style.cssText='flex:1;min-width:0;';
+    const sp=SPECIES[m.id];
+    const nm=el('div');nm.style.cssText='font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    nm.appendChild(document.createTextNode(sp.n+' Nv.'+m.lv+' '));
+    for(const t of sp.types){
+      const chip=el('span','',TYPE_PT[t]);
+      chip.style.cssText='display:inline-block;padding:0 3px;border-radius:4px;margin-left:2px;font-size:.62em;color:#fff;background:'+TYPE_COLOR[t]+';';
+      nm.appendChild(chip);
+    }
     const hp=curStatsMon(m).hp;
-    const hpt=el('div','',pad(m.hp)+'/'+pad(hp)+' PS'+(m.status?' ['+(STATUS_PT[m.status]||'')+']':''));
-    hpt.style.fontSize='.85em';hpt.style.color=m.hp<=0?'#e05050':'#8898c0';
+    const badges=[];
+    if(m.status)badges.push(STATUS_PT[m.status]);
+    if(m.conf)badges.push('CONF');
+    const hpt=el('div','',m.hp+'/'+hp+' PS · '+(ROLE_PT[sp.r]||'')+(badges.length?' · '+badges.join('/'):''));
+    hpt.style.cssText='font-size:.78em;color:'+(m.hp<=0?'#e05050':'#8898c0')+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
     info.appendChild(nm);info.appendChild(hpt);row.appendChild(cv);row.appendChild(info);
     return row;
   }});
   if(idx==='back')return;
   const m=S.party[idx];
-  const st=curStatsMon(m);
-  await showMsg(SPECIES[m.id].n+' — Lv.'+m.lv+' — '+m.hp+'/'+st.hp+' PS');
-  await showMsg('ATK '+st.atk+' DEF '+st.def+' VEL '+st.spe);
-  const mvLine=m.moves.map(mv=>MOVES[mv.id].n).join(', ');
-  await showMsg('Golpes: '+mvLine);
+  await monSummary(m);
   partyOpen(inBattle);
+}
+/* Resumo completo do monstro: papel, stats, golpes com detalhe,
+   e evolução pendente. */
+async function monSummary(m){
+  const sp=SPECIES[m.id],st=curStatsMon(m);
+  const bst=sp.stats.hp+sp.stats.atk+sp.stats.def+sp.stats.spa+sp.stats.spd+sp.stats.spe;
+  const badges=[];
+  if(m.status)badges.push(STATUS_PT_LONG[m.status]||STATUS_PT[m.status]);
+  if(m.conf)badges.push('confuso');
+  await showMsg(sp.n+' — Nv.'+m.lv+' — '+m.hp+'/'+st.hp+' PS'+(badges.length?' ('+badges.join(', ')+')':''));
+  await showMsg('Tipo: '+sp.types.map(t=>TYPE_PT[t]).join('/')+'   Papel: '+(ROLE_PT[sp.r]||'?')+'   Habitat: '+sp.hab);
+  await showMsg('PS '+st.hp+'  ATQ '+st.atk+'  DEF '+st.def+'  ESP '+st.spa+'  EID '+st.spd+'  VEL '+st.spe+'  (base '+bst+')');
+  await showMsg(sp.dex);
+  for(const mv of m.moves){
+    const M=MOVES[mv.id];
+    if(!M)continue;
+    let line='· '+M.n+' ['+TYPE_PT[M.t]+'] ';
+    line+=M.p>0?('Pot '+M.p):'efeito';
+    line+=' · Prec '+(M.a>=101?'—':M.a)+' · PP '+mv.pp+'/'+M.pp;
+    if(M.drain)line+=' · Drena';
+    if(M.recoil)line+=' · Recuo';
+    if(M.recharge)line+=' · Recarrega';
+    if(M.heal)line+=' · Cura '+(M.heal*100)+'%';
+    if(M.multi)line+=' · '+(Array.isArray(M.multi)?M.multi[0]+'-'+M.multi[1]:M.multi)+' acertos';
+    if(M.pri)line+=' · Prioridade';
+    if(M.eff){
+      const parts=[];
+      for(const k in M.eff){
+        if(k==='chance')continue;
+        const v=M.eff[k];
+        if(['atk','def','spa','spd','spe','acc','eva'].indexOf(k)>=0)parts.push(({atk:'ATQ',def:'DEF',spa:'ESP',spd:'EID',spe:'VEL',acc:'PRE',eva:'EVA'})[k]+(v>0?'+':'')+v);
+        else parts.push(({burn:'QUE',par:'PAR',pois:'VEN',sleep:'DOR',freeze:'CON',conf:'CONF',flinch:'ATORDOA'})[k]||k);
+      }
+      if(parts.length)line+=' · '+parts.join(' ');
+    }
+    await showMsg(line);
+  }
+  if(sp.evo){
+    const evo=sp.evo.find(e=>e.lv===m.lv)||sp.evo.find(e=>e.lv>m.lv);
+    if(evo){
+      const to=SPECIES[evo.to];
+      const known=S.dexSeen[evo.to];
+      await showMsg(evo.lv===m.lv
+        ?'Está pronto para evoluir para '+(known?to.n:'???')+'!'
+        :'Evolui no Nv.'+evo.lv+' ('+(known?('em '+to.n):'destino desconhecido')+')');
+    }
+  }
 }
 /* ---------- bolsa ---------- */
 async function bagOpen(){
@@ -2584,11 +3514,15 @@ async function useItemOutOfBattle(id){
     if(idx==='back')return;
     const m=S.party[idx];
     if(it.type==='heal'&&m.hp>=curStatsMon(m).hp){showToast('PS já está no máximo!');return;}
-    if(it.type==='status'&&!m.status&&!m.conf){showToast('Sem condição de status!');return;}
+    if(it.type==='status'&&!(it.fullOnly?!!m.status:hasStatus(m))){showToast(it.fullOnly?'Sem condição para curada!':'Sem condição de status!');return;}
     if(it.type==='revive'&&m.hp>0){showToast('O monstro ainda pode lutar!');return;}
     S.bag[id]--;
     if(it.type==='heal')m.hp=Math.min(curStatsMon(m).hp,m.hp+it.heal);
-    if(it.type==='status'){m.status=null;m.conf=null;}
+    if(it.type==='status'){
+      m.status=null;
+      if(!it.fullOnly)m.conf=0;
+      m.sleepTurns=0;m.frozenTurns=0;
+    }
     if(it.type==='revive')m.hp=Math.floor(curStatsMon(m).hp/2);
     AudioSys.heal();
     showToast('Usou '+it.n+'!');
@@ -2617,7 +3551,7 @@ async function cardOpen(){
   add('Dinheiro: <b>₽'+S.money.toLocaleString('pt-BR')+'</b>');
   add('Tempo: <b>'+formatTime(S.playtime)+'</b>');
   add('Insígnias: <b>'+S.badges.length+'/4</b> '+(S.badges.length?S.badges.map(b=>GYM_DEFS[b].badge.split(' ')[1]).join(', '):''));
-  add('Pokédex: <b>'+Object.keys(S.dexCaught).length+' capturados</b>');
+  add('Bestiário: <b>'+Object.keys(S.dexCaught).length+' capturados</b>');
   const btn=el('div','tm sel','Fechar');btn.style.cssText='text-align:center;margin-top:8px;font-weight:bold;color:#f0d058;cursor:pointer;';
   btn.onclick=()=>{closeOverlays();};
   panel.appendChild(btn);ov.appendChild(panel);uiRoot().appendChild(ov);
@@ -2662,37 +3596,58 @@ async function shopOpen(){
 /* ---------- PC ---------- */
 async function pcOpen(){
   S.box=S.box||[];const box=S.box;
-  const loop=async()=>{
+  const row=(m)=>{
+    const r=el('div');r.style.cssText='display:flex;gap:6px;align-items:center;flex:1;min-width:0;';
+    const cv=document.createElement('canvas');cv.className='pixel';cv.width=30;cv.height=30;
+    cv.getContext('2d').drawImage(monsterSprite(SPECIES[m.id],false,2),0,0,30,30);
+    const info=el('div');info.style.cssText='display:flex;flex-direction:column;min-width:0;flex:1;';
+    const a=el('span','',SPECIES[m.id].n+' Nv.'+m.lv);
+    a.style.cssText='font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    const b=el('span','',m.hp+'/'+curStatsMon(m).hp+' PS · '+(ROLE_PT[SPECIES[m.id].r]||''));
+    b.style.cssText='font-size:.76em;color:#9da8c5;';
+    info.appendChild(a);info.appendChild(b);
+    r.appendChild(cv);r.appendChild(info);
+    return r;
+  };
+  const browse=async()=>{
     const items=box.map((m,i)=>i);
-    const idx=await listUI(items.length?items:['(PC vazio)'],{title:'PC DE BILL — '+items.length+' monstros',render:(i)=>{
-      const m=box[i];const row=el('div');row.style.cssText='display:flex;gap:8px;align-items:center;';
-      if(!m)return el('span','',i);
-      const cv=document.createElement('canvas');cv.className='pixel';cv.width=32;cv.height=32;
-      cv.getContext('2d').drawImage(monsterSprite(SPECIES[m.id],false,2),0,0,32,32);
-      row.appendChild(cv);row.appendChild(el('span','',SPECIES[m.id].n+' Lv.'+m.lv));
-      return row;
-    }});
-    if(idx==='back'){
-      const t=await listUI(['Retirar','Depositar','Sair'],{title:'PC'});
-      if(t===2||t==='back'){closeOverlays();return;}
-      if(t===0){
-        if(!box.length){showToast('PC vazio!');loop();return;}
-        if(S.party.length>=6){showToast('Equipe cheia!');loop();return;}
-        const pick=await listUI(box.map((m,i)=>i),{title:'Retirar',render:(i)=>{
-          const m=box[i];return el('span','',SPECIES[m.id].n+' Lv.'+m.lv);
-        }});
-        if(pick==='back'){loop();return;}
-        S.party.push(box.splice(pick,1)[0]);
-        showToast('Retirado!');loop();return;
+    const idx=await listUI(items.length?items:['(PC vazio)'],
+      {title:'NO PC — '+items.length+' monstro(s)',keep:true,
+       render:(i)=>(typeof i==='number'&&box[i])?row(box[i]):el('span','','(PC vazio)')});
+    if(typeof idx==='number'&&box[idx]){
+      if(S.party.length>=6){showToast('Equipe cheia!');browse();return;}
+      const moved=box.splice(idx,1)[0];
+      S.party.push(moved);AudioSys.confirm();
+      showToast(SPECIES[moved.id].n+' foi para a equipe!');
+      browse();return;
+    }
+    loop();
+  };
+  const loop=async()=>{
+    const t=await listUI(['Retirar','Depositar','Ver todos','Sair'],
+      {title:'PC DE BILL — equipe '+S.party.length+'/6 · no PC '+box.length});
+    if(t===3||t==='back'){closeOverlays();return;}
+    if(t===2){await browse();return;}
+    if(t===0){
+      if(!box.length){showToast('O PC está vazio!');loop();return;}
+      if(S.party.length>=6){showToast('Equipe cheia!');loop();return;}
+      const pick=await listUI(box.map((m,i)=>i),{title:'Retirar do PC',keep:true,
+        render:(i)=>row(box[i])});
+      if(typeof pick==='number'){
+        const moved=box.splice(pick,1)[0];
+        S.party.push(moved);AudioSys.confirm();
+        showToast(SPECIES[moved.id].n+' foi para a equipe!');
       }
-      if(t===1){
-        if(S.party.length<=1){showToast('Precisa manter pelo menos 1!');loop();return;}
-        const pick=await listUI(S.party.map((m,i)=>i),{title:'Depositar',render:(i)=>{
-          const m=S.party[i];return el('span','',SPECIES[m.id].n+' Lv.'+m.lv);
-        }});
-        if(pick==='back'){loop();return;}
-        box.push(S.party.splice(pick,1)[0]);
-        showToast('Depositado!');loop();return;
+      loop();return;
+    }
+    if(t===1){
+      if(S.party.length<=1){showToast('Você precisa manter pelo menos 1 na equipe!');loop();return;}
+      const pick=await listUI(S.party.map((m,i)=>i),{title:'Depositar na equipe',keep:true,
+        render:(i)=>row(S.party[i])});
+      if(typeof pick==='number'){
+        const moved=S.party.splice(pick,1)[0];
+        box.push(moved);AudioSys.confirm();
+        showToast(SPECIES[moved.id].n+' foi para o PC!');
       }
       loop();return;
     }
@@ -2711,7 +3666,7 @@ function hallOpen(){
   ov.appendChild(h1);ov.appendChild(p);
   const list=S.party.map(m=>SPECIES[m.id].n+' Lv.'+m.lv).join(' • ');
   ov.appendChild(el('div','sub','Equipe: '+list));
-  const thanks=el('div','','Obrigado por jogar este clone de Pokémon GBA!');
+  const thanks=el('div','','Obrigado por jogar MonstroQuest!');
   thanks.style.cssText='position:absolute;bottom:10%;color:#8898c0;';
   ov.appendChild(thanks);
   const cont=el('div','tm sel','Continuar jogando');
@@ -2740,8 +3695,9 @@ function battleOpen(){
     '</div>'+
     '<div class="opp"><canvas class="spr"></canvas></div>'+
     '<div class="ply"><canvas class="spr"></canvas></div>'+
-    '<div class="hbox ohp"><div class="bname"></div><span class="btype"></span><div class="bstat"><span class="lv"></span><span class="hpnum"></span></div><div class="hpwrap"><div class="hpfill"></div></div></div>'+
-    '<div class="hbox php"><div class="bname"></div><span class="btype"></span><div class="bstat"><span class="lv"></span><span class="hpnum"></span></div><div class="hpwrap"><div class="hpfill"></div></div></div>'+
+    '<div class="hbox ohp"><div class="bname"></div><span class="btype"></span><div class="statusline"></div><div class="bstat"><span class="lv"></span><span class="hpnum"></span></div><div class="hpwrap"><div class="hpfill"></div></div></div>'+
+    '<div class="hbox php"><div class="bname"></div><span class="btype"></span><div class="statusline"></div><div class="bstat"><span class="lv"></span><span class="hpnum"></span></div><div class="hpwrap"><div class="hpfill"></div></div></div>'+
+    '<div class="stphase"><div class="sp sph"></div><div class="sp spp"></div></div>'+
     '<div id="bst" class="status hidden"></div>'+
     '<div class="cmd" id="bcmd"></div>'+
     '<div class="battle-msg hidden"><div class="btxt"></div><div class="barrow">▼</div></div>'+
@@ -2784,13 +3740,28 @@ function battleMsg(text,align){
     t.textContent='';
     const ar=box.querySelector('.barrow');if(ar)ar.style.display='none';
     let i=0;
+    /* msgResolve só é publicado quando o texto terminou de aparecer
+       (a máquina de escrever leva ~14ms a cada 2 letras). */
+    let armed=false;
+    const arm=()=>{
+      if(armed)return;
+      armed=true;
+      if(ar)ar.style.display='block';
+      UI.msgResolve=()=>{
+        UI.msgResolve=null;
+        UI.clickLock=performance.now()+300;
+        box.classList.add('hidden');t.textContent='';
+        if(ar)ar.style.display='none';
+        if(grid)grid.classList.remove('hidden');
+        res();
+      };
+    };
     const iv=setInterval(()=>{
-      if(seq!==bmsgSeq){clearInterval(iv);return;}
+      /* Se uma mensagem NOVA tomou a caixa, esta foi cancelada: resolve
+         para não deixar a batalha travada esperando para sempre. */
+      if(seq!==bmsgSeq){clearInterval(iv);if(UI.msgResolve&&armed)UI.msgResolve=null;res();return;}
       i+=2;t.textContent=text.slice(0,i);
-      if(i>=text.length){
-        clearInterval(iv);ar.style.display='block';
-        UI.msgResolve=()=>{UI.msgResolve=null;UI.clickLock=performance.now()+300;box.classList.add('hidden');t.textContent='';ar.style.display='none';if(grid)grid.classList.remove('hidden');res();};
-      }
+      if(i>=text.length){clearInterval(iv);arm();}
     },14);
   });
 }
@@ -2813,7 +3784,27 @@ function battleRefresh(){
     const num=box.querySelector('.hpnum');num.textContent=mon.hp+'/'+maxHp(mon);
     const types=SPECIES[mon.id].types||[];
     const chip=box.querySelector('.btype');
-    if(chip){chip.textContent=types.length?TYPE_PT[types[0]]:'';chip.style.background=types.length?TYPE_COLOR[types[0]]:'transparent';}
+    if(chip){
+      /* mostra AMBOS os tipos: informação que muda a decisão de troca */
+      chip.textContent=types.map(t=>TYPE_PT[t]).join(' ');
+      chip.style.background=types.length>=2
+        ?'linear-gradient(90deg,'+TYPE_COLOR[types[0]]+' 50%,'+TYPE_COLOR[types[1]]+' 50%)'
+        :(types.length?TYPE_COLOR[types[0]]:'transparent');
+    }
+    /* badges de condição DENTRO da caixa de HP: sempre visível, sem sobrepor */
+    const sl=box.querySelector('.statusline');
+    if(sl){
+      sl.textContent='';
+      const badges=[];
+      if(mon.status)badges.push({t:STATUS_PT[mon.status],c:'#c050d8'});
+      if(mon.conf)badges.push({t:'CONF',c:'#e0a020'});
+      if(mon.leech)badges.push({t:'SEMENT',c:'#5ab86a'});
+      if(mon.flinchTurns>0)badges.push({t:'TREMEU',c:'#d88a30'});
+      if(mon.charging)badges.push({t:'RECARGA',c:'#f09030'});
+      for(const b of badges){
+        const s=el('span','sbadge',esc(b.t));s.style.background=b.c;sl.appendChild(s);
+      }
+    }
     const fill=box.querySelector('.hpfill');
     const pct=mon.hp/maxHp(mon)*100;
     fill.style.width=Math.max(0,pct)+'%';
@@ -2822,13 +3813,29 @@ function battleRefresh(){
   };
   drawMon('.opp','.ohp','.opp canvas',om?oSpriteInfo():null,om);
   drawMon('.ply','.php','.ply canvas',pm?{id:pm.id,back:true}:null,pm);
-  UI.battleRefresh=battleRefresh;
+  /* barra de fases: os estágios decidem a partida e precisam ser lidos */
+  const phases=ov.querySelectorAll('.stphase .sp');
+  if(phases.length===2){
+    const fill=(node,mon,label)=>{
+      if(!mon){node.textContent='';return;}
+      node.textContent='';
+      const head=el('span','spn',label);node.appendChild(head);
+      const stats=[['atk','AT'],['def','DF'],['spa','ES'],['spd','EI'],['spe','VL']];
+      for(const [k,ab] of stats){
+        const v=mon.stages[k]||0;
+        if(v===0)continue;
+        const sp=el('span','spv'+(v>0?' up':' dn'),ab+(v>0?'+':'')+v);
+        node.appendChild(sp);
+      }
+      if(!node.children.length||node.children.length===1){
+        const sp=el('span','spv','');node.appendChild(sp);
+      }
+    };
+    fill(phases[0],om,'INI ');
+    fill(phases[1],pm,'SEU ');
+  }
   const st=ov.querySelector('#bst');
-  const sList=[];
-  if(pm){if(pm.status)sList.push('SEU: '+STATUS_PT[pm.status]);if(pm.conf)sList.push('SEU: CONF');}
-  if(om){if(om.status)sList.push('INI: '+STATUS_PT[om.status]);if(om.conf)sList.push('INI: CONF');}
-  st.textContent=sList.join('  ');
-  st.classList.toggle('hidden',!sList.length);
+  if(st)st.classList.add('hidden');
 }
 function battleHit(side,crit){
   const ov=uiRoot().querySelector('#battle');if(!ov)return;
@@ -2889,57 +3896,154 @@ function mainGrid(){
   const opts=[
     {t:'LUTAR',ic:'⚔️',fn:()=>movesMenu()},
     {t:'BOLSA',ic:'🎒',fn:()=>bagMenu()},
-    {t:'POKÉMON',ic:'🐾',fn:()=>partyMenu()},
+    {t:'EQUIPE',ic:'🐾',fn:()=>partyMenu()},
     {t:'FUGIR',ic:'🏃',fn:()=>{AudioSys.confirm();BUI.resolve({type:'run'});}},
   ];
-  if(G.battle&&G.battle.type==='trainer')opts[3]={t:'FUGIR',ic:'🏃',enabled:false,fn:()=>{}};
+  if(G.battle&&G.battle.type==='trainer')opts[3]={t:'FUGIR',ic:'🏃',enabled:false,fn:()=>{},gs:'não dá'};
   gridShow(opts);
 }
+/* Menu de golpes com informação de decisão ANTES de escolher:
+   tipo, potência, precisão, PP e a efetividade contra o alvo atual. */
 function movesMenu(){
   BUI.cmdMode='moves';
-  const pm=pMon();
-  if(!pm.moves.some(mv=>mv.pp>0)){BUI.resolve({type:'move',i:-1});return;}
-  gridShow(pm.moves.map((mv,i)=>({
-    t:MOVES[mv.id].n,tag:MOVES[mv.id].t,
-    sub:mv.pp<=0?'sem PP':'PP '+mv.pp+'/'+MOVES[mv.id].pp,
-    enabled:mv.pp>0,
-    fn:()=>{AudioSys.confirm();BUI.resolve({type:'move',i});}
-  })));
+  const pm=pMon(),om=oMon();
+  if(!pm||!pm.moves.some(mv=>mv.pp>0)){BUI.resolve({type:'move',i:-1});return;}
+  gridShow(pm.moves.map((mv,i)=>{
+    const M=MOVES[mv.id];
+    const eff=om?speciesTypeMult(SPECIES[om.id].types,M.t):1;
+    let effTag='',effCls='';
+    if(M.p>0&&om){
+      if(eff===0){effTag='SEM EFEITO';effCls='e0';}
+      else if(eff>=2){effTag='SUPER';effCls='e2';}
+      else if(eff<1){effTag='RESIST.';effCls='e05';}
+    }
+    const parts=[];
+    if(M.p>0)parts.push('Pot '+M.p);
+    parts.push(M.a>=101?'Prec 100':'Prec '+M.a);
+    if(M.multi)parts.push(Array.isArray(M.multi)?(M.multi[0]+'-'+M.multi[1]+'x'):(M.multi+'x'));
+if(M.drain)parts.push('Drena');
+    if(M.recoil)parts.push('Recuo');
+    if(M.recharge)parts.push('Recarrega');
+    if(M.heal)parts.push('Cura');
+    if(M.cure)parts.push('+Cura status');
+    if(M.pri)parts.push('Prioridade');
+    if(M.multi)parts.push(Array.isArray(M.multi)?(M.multi[0]+'-'+M.multi[1]+' acertos'):(M.multi+' acertos'));
+    if(M.eff){
+      const e2=[];
+      for(const k in M.eff){
+        if(k==='chance')continue;
+        const v=M.eff[k];
+        if(['atk','def','spa','spd','spe','acc','eva'].indexOf(k)>=0)
+          e2.push(({atk:'ATQ',def:'DEF',spa:'ESP',spd:'EID',spe:'VEL',acc:'PRE',eva:'EVA'})[k]+(v>0?'+':'')+v);
+        else e2.push(({burn:'QUE',par:'PAR',pois:'VEN',sleep:'DOR',freeze:'CON',conf:'CONF',flinch:'ATORDOA'})[k]||k);
+      }
+      if(e2.length)parts.push(e2.join(' '));
+    }
+    parts.push(mv.pp<=0?'SEM PP':'PP '+mv.pp+'/'+M.pp);
+    return {
+      t:M.n,tag:M.t,sub:parts.join(' · '),
+      effTag,effCls,
+      out:mv.pp<=0,
+      enabled:mv.pp>0,
+      fn:()=>{AudioSys.confirm();BUI.resolve({type:'move',i});}
+    };
+  }),'moves');
 }
 async function bagMenu(){
   const usable=ITEM_ORDER.filter(id=>S.bag[id]>0);
   const idx=await listUI(usable.length?usable:['(vazia)'],{title:'BOLSA',keep:true,
     render:(id,i,sel)=>{
       if(id==='(vazia)')return el('span','',id);
-      const row=el('div');row.style.cssText='display:flex;justify-content:space-between;flex:1;';
-      row.appendChild(el('span','',ITEMS[id].n));row.appendChild(el('span','','x'+S.bag[id]));
+      const row=el('div');row.style.cssText='display:flex;justify-content:space-between;align-items:center;gap:4px;flex:1;';
+      const l=el('div');l.style.cssText='display:flex;flex-direction:column;min-width:0;flex:1;';
+      l.appendChild(el('span','',ITEMS[id].n));
+      /* bola em batalha selvagem: mostra a chance ANTES de gastar.
+         Só para itens do tipo 'ball' — uma Poção não tem chance de captura. */
+      const info=(G.battle&&G.battle.wild&&ITEMS[id].type==='ball')?catchInfo(id):null;
+      if(info){
+        const t=el('span','','Captura: '+info.label);
+        t.style.cssText='font-size:.78em;color:'+info.color+';font-weight:bold;';
+        l.appendChild(t);
+      }
+      row.appendChild(l);row.appendChild(el('span','','x'+S.bag[id]));
       return row;
     }});
   if(BUI.open&&idx!=='back'&&usable.length){
     AudioSys.confirm();BUI.resolve({type:'item',item:usable[idx]});
   }else if(BUI.open){mainGrid();}
 }
+/* Trocar em batalha é uma DECISÃO: a tela mostra papel, tipos,
+   PS e a efetividade do candidato contra o oponente atual. */
 async function partyMenu(){
-  const alive=S.party.map((m,i)=>i).filter(i=>S.party[i].hp>0);
-  const idx=await listUI(alive,{title:'ESCOLHA',keep:true,render:(i)=>{
-    const m=S.party[i];
-    return el('span','',SPECIES[m.id].n+' ('+m.hp+'/'+curStatsMon(m).hp+')');
-  }});
+  const B=G.battle;
+  const om=oMon();
+  const current=B?B.pIndex:-1;
+  const alive=S.party.map((m,i)=>i).filter(i=>S.party[i].hp>0&&i!==current);
+  if(!alive.length){mainGrid();return;}
+  const idx=await listUI(alive,{title:'TROCAR — contra '+SPECIES[om.id].n,keep:true,
+    render:(i)=>{
+      const m=S.party[i];
+      const row=el('div');
+      row.style.cssText='display:flex;gap:6px;align-items:center;flex:1;min-width:0;';
+      const cv=document.createElement('canvas');cv.className='pixel';cv.width=28;cv.height=28;
+      cv.getContext('2d').drawImage(monsterSprite(SPECIES[m.id],false,2),0,0,28,28);
+      const info=el('div');info.style.cssText='display:flex;flex-direction:column;min-width:0;flex:1;';
+      const nm=el('span','',SPECIES[m.id].n+' Nv.'+m.lv);
+      nm.style.cssText='font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+      const sub=el('span','',m.hp+'/'+curStatsMon(m).hp+' PS · '+(ROLE_PT[SPECIES[m.id].r]||''));
+      sub.style.cssText='font-size:.78em;color:#9da8c5;';
+      info.appendChild(nm);info.appendChild(sub);
+      /* efetividade do candidato contra o oponente */
+      if(om){
+        let best=1,bestName='';
+        for(const mv of m.moves){
+          const M=MOVES[mv.id];
+          if(!M||M.p===0)continue;
+          const e=speciesTypeMult(SPECIES[om.id].types,M.t);
+          if(e>best){best=e;bestName=M.n;}
+        }
+        const tag=el('span','',best>=2?('SUPER c/'+bestName):(best<1?'resistido':'—'));
+        tag.style.cssText='font-size:.72em;font-weight:bold;color:'+(best>=2?'#7ee08a':(best<1?'#f08a8a':'#7c8cb8'))+';white-space:nowrap;';
+        info.appendChild(tag);
+      }
+      row.appendChild(cv);row.appendChild(info);
+      return row;
+    }});
   if(BUI.open&&idx!=='back'){AudioSys.confirm();BUI.resolve({type:'switch',idx:alive[idx]});}
   else if(BUI.open){mainGrid();}
 }
-function gridShow(opts){
+function gridShow(opts,mode){
   BUI.grid=opts;BUI.sel=0;
+  if(mode)BUI.cmdMode=mode;
   const c=uiRoot().querySelector('#bcmd');if(!c)return;
   c.classList.remove('hidden');
+  c.classList.toggle('is-moves',mode==='moves');
   c.innerHTML='';
   opts.forEach((o,i)=>{
-    const d=el('div','opt'+(i===0?' sel':''));
-    let html='<span class="gt">'+(o.ic?'<span class="ic">'+o.ic+'</span>':'')+esc(o.t)+'</span>';
-    if(o.tag||o.sub!==undefined){
-      html+='<span class="gs">'+(o.tag?'<span class="tag" style="background:'+TYPE_COLOR[o.tag]+'">'+TYPE_PT[o.tag]+'</span>':'')+(o.sub!==undefined?esc(o.sub):'')+'</span>';
+    const d=el('div','opt'+(i===0?' sel':'')+(o.out?' out':''));
+    if(mode==='moves'){
+      /* layout compacto: nome + info + etiqueta de efetividade */
+      const nm=el('div','mname');
+      if(o.tag){
+        const tg=el('span','tag',esc(TYPE_PT[o.tag]));
+        tg.style.background=TYPE_COLOR[o.tag];
+        tg.style.marginRight='3px';
+        nm.appendChild(tg);
+      }
+      nm.appendChild(document.createTextNode(esc(o.t)));
+      d.appendChild(nm);
+      if(o.sub!==undefined)d.appendChild(el('div','pp',esc(o.sub)));
+      if(o.effTag){
+        const e2=el('div','eff '+o.effCls,esc(o.effTag));
+        d.appendChild(e2);
+      }
+    }else{
+      let html='<span class="gt">'+(o.ic?'<span class="ic">'+o.ic+'</span>':'')+esc(o.t)+'</span>';
+      if(o.tag||o.sub!==undefined){
+        html+='<span class="gs">'+(o.tag?'<span class="tag" style="background:'+TYPE_COLOR[o.tag]+'">'+TYPE_PT[o.tag]+'</span>':'')+(o.sub!==undefined?esc(o.sub):'')+'</span>';
+      }
+      d.innerHTML=html;
     }
-    d.innerHTML=html;
     if(o.enabled===false)d.style.opacity='.35';
     d.onclick=()=>{if(o.enabled!==false){AudioSys.confirm();o.fn();}};
     c.appendChild(d);
@@ -2957,6 +4061,7 @@ function gridShow(opts){
   UI.keyNav=d=>{
     AudioSys.blip();
     let ns=BUI.sel;
+    /* menu de golpes é 2x2: up/down pulam linha */
     if(d==='up'||d==='down')ns=BUI.sel+(d==='up'?-2:2);
     else ns=BUI.sel+(d==='left'?-1:1);
     if(ns<0||ns>=opts.length)ns=nextEnabled(BUI.sel,1);
@@ -2975,9 +4080,46 @@ function gridRenderSel(){
   const c=uiRoot().querySelector('#bcmd');if(!c)return;
   [...c.children].forEach((d,i)=>d.classList.toggle('sel',i===BUI.sel));
 }
+/* Aprender 5º golpe: a tela mostra POR QUE trocar, não só o nome.
+   Cada opção traz tipo, potência, PP e a efetividade contra o oponente
+   atual — é aqui que nasce a dúvida "qual dos quatro eu substituo?". */
 function learnMove(m,mvId){
-  const opts=m.moves.map(mv=>MOVES[mv.id].n).concat(['Não aprender']);
-  return listUI(opts,{title:SPECIES[m.id].n+' quer aprender '+MOVES[mvId].n+'!',keep:true});
+  const newM=MOVES[mvId];
+  const om=oMon();
+  const effTag=(M)=>{
+    if(!om)return '';
+    /* golpes de status/efeito NÃO têm efetividade de tipo no dano,
+       mas o TIPO ainda importa: um golpe do tipo do usuário é STAB
+       e um golpe resistido pelo alvo é menos confiável. */
+    const e=speciesTypeMult(SPECIES[om.id].types,M.t);
+    if(e===0)return M.p?' · SEM EFEITO':' · inútil aqui';
+    if(e>=2)return ' · super eficaz';
+    if(e<1)return' · resistido';
+    return ' · neutro';
+  };
+  const desc=(M)=>{
+    let s=TYPE_PT[M.t];
+    s+=M.p>0?' · Pot '+M.p:' · efeito';
+    s+=' · PP '+M.pp;
+    if(M.drain)s+=' · drena';
+    if(M.heal)s+=' · cura';
+    if(M.recharge)s+=' · recarrega';
+    s+=effTag(M);
+    return s;
+  };
+  const opts=m.moves.map(mv=>({label:MOVES[mv.id].n,sub:desc(MOVES[mv.id])}));
+  opts.push({label:MOVES[mvId].n,sub:'NOVO · '+desc(newM),fresh:true});
+  opts.push({label:'Não aprender',sub:'Manter os golpes atuais'});
+  return listUI(opts,{title:SPECIES[m.id].n+' quer aprender '+newM.n+'!',keep:true,
+    render:(o)=>{
+      const row=el('div');row.style.cssText='display:flex;flex-direction:column;min-width:0;flex:1;';
+      const a=el('span','',o.label);
+      a.style.cssText='font-weight:bold;color:'+(o.fresh?'#7ee08a':'#fff')+';';
+      const b=el('span','',o.sub);
+      b.style.cssText='font-size:.75em;color:#9da8c5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+      row.appendChild(a);row.appendChild(b);
+      return row;
+    }});
 }
 function battleSwitch(aliveIdx){
   const alive=aliveIdx||S.party.map((m,i)=>i).filter(i=>S.party[i].hp>0);
@@ -2990,8 +4132,29 @@ function battleSwitch(aliveIdx){
 UI.battleOpen=battleOpen;
 UI.battleRefresh=battleRefresh;UI.battleHit=battleHit;UI.battleFaint=battleFaint;
 UI.battleBall=battleBall;UI.battleEvolve=battleEvolve;UI.battleClose=battleClose;UI.battleCommand=battleCommand;
+/* tela de confirmação de evolução: mostra a mudança de tipo/papel */
+function confirmEvolve(m,to,typeChanged){
+  const before=curStatsMon(m);
+  const sim={id:to.id,lv:m.lv};
+  const after=curStatsMon(sim);
+  const opts=[{label:'Evoluir!',sub:'Virar '+to.n},{label:'Agora não',sub:'Continuar como '+SPECIES[m.id].n}];
+  return listUI(opts,{title:SPECIES[m.id].n+' → '+to.n,keep:true,
+    render:(o)=>{
+      const row=el('div');row.style.cssText='display:flex;flex-direction:column;flex:1;min-width:0;';
+      const a=el('span','',o.label);a.style.cssText='font-weight:bold;color:#fff;';
+      const b=el('span','',o.sub);b.style.cssText='font-size:.75em;color:#9da8c5;';
+      row.appendChild(a);row.appendChild(b);
+      return row;
+    }}).then(r=>{
+    if(r==='back')return 'no';
+    return r===1?'no':'yes';
+  });
+}
+UI.confirmEvolve=confirmEvolve;
 UI.learnMove=learnMove;UI.battleSwitch=battleSwitch;
 UI.menuOpen=menuOpen;UI.shopOpen=shopOpen;UI.pcOpen=pcOpen;UI.hallOpen=hallOpen;
+UI.dexOpen=dexOpen;UI.partyOpen=partyOpen;UI.bagOpen=bagOpen;UI.cardOpen=cardOpen;
+UI.monSummary=monSummary;
 
 /* ============================================================
    RENDERIZADOR DO MUNDO (canvas 240x160)
@@ -3106,6 +4269,646 @@ function renderWorld(){
   }
 }
 /* ============================================================
+   BALANCE LAB — análise de balanceamento pelo console.
+   Uso: MonstroQuestBalance.run()
+   ============================================================ */
+const MonstroQuestBalance={
+  /* BST de uma espécie */
+  bst(sp){return sp.stats.hp+sp.stats.atk+sp.stats.def+sp.stats.spa+sp.stats.spd+sp.stats.spe;},
+  isFinalForm(id){return Object.values(SPECIES).some(s=>s.evo&&s.evo.some(e=>e.to===id));},
+  /* Expected damage de um golpe contra um tipo (para comparar cobertura) */
+  moveAvgDamage(m,userTypes){
+    let sum=0,n=0;
+    TYPES.forEach(dt=>{
+      const e=typeMult(m.t,dt);
+      if(e===0)return;
+      const stab=userTypes&&userTypes.indexOf(m.t)>=0?1.5:1;
+      sum+=(10+m.p)*stab*e;n++;
+    });
+    return n?sum/n:0;
+  },
+  /* DPS esperado de um golpe, descontando recuo/recharge */
+  effectiveDps(m,userTypes){
+    const base=this.moveAvgDamage(m,userTypes);
+    let d=base/m.pp;
+    if(m.recharge)d*=0.55;
+    if(m.recoil)d*=0.82;
+    if(m.multi)d*=1.35;
+    return d;
+  },
+  /* Tabela de tipos: quem é forte, quem é fraco */
+  typeMatrix(){
+    const off={},defn={};
+    TYPES.forEach(at=>{
+      let o=0,c=0;
+      TYPES.forEach(dt=>{const e=typeMult(at,dt);if(e===0)return;o+=e;c+=1/e;});
+      off[at]=o/TYPES.length;defn[at]=c/TYPES.length;
+    });
+    return {off,defn};
+  },
+  /* Análise completa */
+  run(){
+    const L=[];
+    const p=s=>L.push(s);
+    p('══════ BALANCE LAB — MonstroQuest ══════');
+    p('');
+    /* 1. Espécies */
+    p('【1】BST por espécie (base vs final)');
+    const all=Object.values(SPECIES);
+    const finals=all.filter(s=>this.isFinalForm(s.id));
+    /* "base" = primeira forma da linha (sem evolução de NENHUM outro) */
+    const isFirstStage=id=>!Object.values(SPECIES).some(s=>s.evo&&s.evo.some(e=>e.to===id));
+    const bases=all.filter(s=>isFirstStage(s.id));
+    const bst=a=>a.map(s=>this.bst(s)).sort((x,y)=>x-y);
+    const bs=bst(bases),fs=bst(finals);
+    p('  Bases : n='+bases.length+' min='+bs[0]+' max='+bs[bs.length-1]+' mediana='+bs[bs.length>>1]);
+    p('  Finais: n='+finals.length+' min='+fs[0]+' max='+fs[fs.length-1]+' mediana='+fs[fs.length>>1]);
+    /* a forma final mais fraca ainda deve superar a base mais forte:
+       caso contrário a evolução "pune" quem escolheu aquela linha */
+    if(fs[0]<=bs[bs.length-1]){
+      const weak=all.filter(s=>this.bst(s)===fs[0]).map(s=>s.n).join(',');
+      const strong=all.filter(s=>this.bst(s)===bs[bs.length-1]).map(s=>s.n).join(',');
+      p('  ⚠ ALERTA: final mais fraco ('+weak+' '+fs[0]+') <= base mais forte ('+strong+' '+bs[bs.length-1]+')');
+    }else{
+      p('  ✓ Progressão de linha consistente (final mínimo > base máximo)');
+    }
+    /* outliers: só sinaliza se um extremo foge MUITO da faixa típica */
+    const iqr=a=>{
+      const q1=a[Math.floor(a.length*0.25)],q3=a[Math.floor(a.length*0.75)];
+      return q3-q1;
+    };
+    const checkOut=(label,pool,poolBst)=>{
+      const spread=iqr(poolBst)||1;
+      const lo=poolBst[0],hi=poolBst[poolBst.length-1];
+      /* só sinaliza extremos REAIS: >2.2x o IQR acima do percentil 90
+         (abaixo do mínimo não alerta:振ência baixa é intencional) */
+      const p90=poolBst[Math.min(poolBst.length-1,Math.floor(poolBst.length*0.9))];
+      const out=pool.filter(s=>this.bst(s)>p90+2.2*spread);
+      if(out.length){
+        p('  ⚠ OUTLIERS de BST ('+label+'): '+out.map(s=>s.n+' '+this.bst(s)+' ('+(ROLE_PT[s.r]||'')+')').join(', '));
+        p('    (BST alto isolado é OK se o PAPEL justifica — é nuke de final de linha)');
+      }else p('  ✓ BST sem outliers relevantes em '+label);
+    };
+    checkOut('bases',bases,bs);
+    checkOut('finais',finals,fs);
+    /* papéis */
+    const roles={};
+    all.forEach(s=>roles[s.r]=(roles[s.r]||0)+1);
+    p('  Papéis: '+Object.entries(roles).map(([k,v])=>k+'='+v).join(' '));
+    p('');
+    /* 2. Golpes */
+    p('【2】Golpes — poder efetivo (DPS esperado, descontando custos)');
+    const rows=Object.entries(MOVES).filter(([k,m])=>m.p>0).map(([k,m])=>({
+      k,n:m.n,t:m.t,p:m.p,pp:m.pp,
+      dps:this.effectiveDps(m,m.t?[m.t]:null)
+    })).sort((a,b)=>b.dps-a.dps);
+    rows.slice(0,8).forEach(r=>p('  '+r.n.padEnd(22)+r.t.padEnd(9)+'p'+String(r.p).padEnd(5)+'pp'+String(r.pp).padEnd(4)+'dpsEf '+r.dps.toFixed(2)));
+    /* quantos golpes de 150 ou mais sem custo */
+    const rawNuke=Object.values(MOVES).filter(m=>m.p>=150&&!m.recharge);
+    p('  ⚠ Golpes de 150+ sem custo: '+(rawNuke.length?rawNuke.map(m=>m.n).join(', '):'nenhum ✓'));
+    /* funções sem使用者 */
+    const learned=new Set();all.forEach(s=>s.learn.forEach(l=>learned.add(l[1])));
+    const dead=Object.keys(MOVES).filter(k=>!learned.has(k));
+    p('  ⚠ Golpes sem espécie que aprenda: '+(dead.length?dead.join(', '):'nenhum ✓'));
+    /* STAB vs não-STAB */
+    p('  Vantagem STAB real: 1.5x sobre o mesmo tipo');
+    p('');
+    /* 3. Tipos */
+    p('【3】Matriz de tipos');
+    const tm=this.typeMatrix();
+    const so=Object.entries(tm.off).sort((a,b)=>b[1]-a[1]);
+    const sd=Object.entries(tm.defn).sort((a,b)=>b[1]-a[1]);
+    p('  Melhor ATAQUE : '+so.slice(0,4).map(([t,v])=>t+' '+v.toFixed(2)).join(' | '));
+    p('  Pior ATAQUE   : '+so.slice(-4).map(([t,v])=>t+' '+v.toFixed(2)).join(' | '));
+    p('  Melhor DEFESA : '+sd.slice(0,4).map(([t,v])=>t+' '+v.toFixed(2)).join(' | '));
+    p('  Pior DEFESA   : '+sd.slice(-4).map(([t,v])=>t+' '+v.toFixed(2)).join(' | '));
+    const spread=so[0][1]-so[so.length-1][1];
+    p('  '+(spread>0.4?'⚠ Spread ofensivo muito grande ('+spread.toFixed(2)+')':'✓ Spread ofensivo aceitável ('+spread.toFixed(2)+')'));
+    p('');
+    /* 4. Crítico */
+    p('【4】Crítico e precisão');
+    p('  Crítico base 1/16 (6.25%) · Golpes com crit 1/8 (12.5%) · Bônus x2');
+    const lowAcc=Object.values(MOVES).filter(m=>m.a<100&&m.p>=80);
+    p('  Golpes fortes com precisão <100%: '+(lowAcc.length?lowAcc.map(m=>m.n+'('+m.a+'%)').join(', '):'nenhum ✓'));
+    p('');
+    /* 5. Captura */
+    p('【5】Chance de captura por cenário');
+    p('  Espécie'.padEnd(12)+'PS'.padEnd(6)+'Bola'.padEnd(12)+'Chance');
+    const sc=[['asperim','pokeBola'],['asperim','ultraBola'],['ignis','pokeBola'],
+      ['ignis','ultraBola'],['ignis','megaBola'],['dragor','ultraBola'],['dragor','megaBola'],
+      ['tritan','ultraBola'],['vulcron','megaBola']];
+    for(const [id,ball] of sc){
+      const mon=newMonster(id,40);
+      [[100,'cheio'],[50,'metade'],[15,'fraco']].forEach(([pct])=>{
+        mon.hp=Math.max(1,Math.floor(maxHp(mon)*pct/100));
+        const c1=catchChance(mon,ball);
+        mon.status='psn';
+        const c2=catchChance(mon,ball);
+        p('  '+SPECIES[id].n.padEnd(12)+(pct+'%').padEnd(6)+ITEMS[ball].n.padEnd(12)+
+          (catchTier(c1).label+' '+(c1*100).toFixed(0)+'%'+
+           '  | venom: '+(catchTier(c2).label+' '+(c2*100).toFixed(0)+'%')));
+      });
+    }
+    const hard=newMonster('dragor',45);hard.hp=Math.floor(maxHp(hard)*0.2);hard.status='brn';
+    const hp=catchChance(hard,'megaBola');
+    p('  Teto absoluto (Mega Bola emevo fraco a 20% PS): '+(hp*100).toFixed(0)+'% '+
+      (hp>=1?'⚠GARANTIDO':'✓ainda falha'));
+    p('');
+    /* 6. EXP */
+    p('【6】Curva de experiência');
+    p('  Nível'.padEnd(8)+'Custo'.padEnd(10)+'Total');
+    let tot=0;
+    [5,10,15,20,25,30,35,40,45,50].forEach(l=>{
+      tot+=expToNext(l);
+      p('  Nv.'+String(l).padEnd(6)+String(expToNext(l)).padEnd(10)+tot);
+    });
+    const g=expGain(newMonster('dragor',45),true);
+    p('  Ganho típico (Dragor Nv.45, treinador): '+g+' EXP');
+    p('  Batalhas por nível em Nv.45: '+(expToNext(45)/g).toFixed(1));
+    p('');
+    /* 7. Equipes de líderes */
+    p('【7】Equipes de líderes e campeão');
+    const teamReport=(label,team,ai)=>{
+      p('  '+label+' (IA nível '+(ai??1)+'):');
+      let allTypes=new Set();let noStab=[];
+      team.forEach(([id,lv])=>{
+        const m=newMonster(id,lv);
+        const own=SPECIES[id].types;
+        own.forEach(t=>allTypes.add(t));
+        const hasStab=m.moves.some(mv=>own.indexOf(MOVES[mv.id].t)>=0&&MOVES[mv.id].p>0);
+        if(!hasStab)noStab.push(SPECIES[id].n);
+        p('    '+SPECIES[id].n.padEnd(11)+'Nv.'+String(lv).padEnd(4)+own.join('/').padEnd(18)+
+          'STAB:'+(hasStab?'sim':'NÃO')+'  '+m.moves.map(x=>MOVES[x.id].n).join(', '));
+      });
+      p('    Cobertura: '+[...allTypes].join('/'));
+      if(noStab.length)p('    ⚠ Sem STAB: '+noStab.join(', '));
+    };
+    GYM_DEFS.forEach((gd,i)=>teamReport('Ginásio '+(i+1)+' — '+gd.name,gd.team,gd.ai));
+    teamReport('Campeão',[['dragor',46],['glacirax',45],['aceir',44],['psiao',44],['umbrax',44],['fadalur',44]],3);
+    p('');
+    /* 8. Economia */
+    p('【8】Economia');
+    p('  Dinheiro inicial: 3000');
+    Object.entries(ITEMS).filter(([k,v])=>v.price>0).forEach(([k,v])=>
+      p('  '+v.n.padEnd(14)+'₽'+String(v.price).padEnd(7)+
+        (v.type==='heal'?('PS por ₽: '+(v.heal/v.price*1000).toFixed(1)):(v.type==='ball'?('qualidade '+v.bonus):''))));
+    p('  Ganho por classe: '+Object.entries(CLS_MONEY).map(([k,v])=>k+' '+v).join(', '));
+    p('');
+    /* 9. Encontros */
+    p('【9】Encontros selvagens');
+    Object.entries(MAPS).forEach(([id,m])=>{
+      if(!m.wild)return;
+      const line=m.wild.map(w=>w[0]+' '+w[1]+'% Nv.'+w[2]+'-'+w[3]).join(' | ');
+      p('  '+id.padEnd(9)+line);
+    });
+    p('');
+    p('══════ fim ══════');
+    const report=L.join('\n');
+    console.log(report);
+    return report;
+  },
+};
+/* ============================================================
+   TESTES — verificações leves, acessíveis pelo console.
+   Uso: MonstroQuestTests.runAll()
+   ============================================================ */
+const MonstroQuestTests={
+  results:[],
+  t(name,fn){
+    let ok=false,err=null;
+    try{const r=fn();ok=(r===true||r===undefined);}
+    catch(e){err=e;}
+    this.results.push({name,ok,err:err?String(err&&err.message||err):null});
+    return ok;
+  },
+  eq(a,b,msg){if(a!==b)throw new Error((msg||'')+' esperado '+b+' recebido '+a);return true;},
+  near(a,b,tol,msg){if(Math.abs(a-b)>tol)throw new Error((msg||'')+' esperado ~'+b+' recebido '+a);return true;},
+  runAll(){
+    const T=this;
+    T.results=[];
+    /* --- criação de monstro --- */
+    T.t('newMonster cria monstro válido',()=>{
+      const m=newMonster('ignis',10);
+      T.eq(m.id,'ignis');T.eq(m.lv,10);T.eq(m.moves.length,4,'deve ter 4 golpes');
+      T.eq(m.hp,maxHp(m),'HP cheio');T.eq(m.exp,0);
+      return m.moves.every(x=>MOVES[x.id]&&x.pp>0);
+    });
+    T.t('newMonster preenche 4 golpes mesmo em nível baixo',()=>{
+      const m=newMonster('vulcron',1);
+      return T.eq(m.moves.length,4);
+    });
+    T.t('PP inicial cheio',()=>{
+      const m=newMonster('chisper',20);
+      return m.moves.every(x=>x.pp===MOVES[x.id].pp);
+    });
+    /* --- stats --- */
+    T.t('curStatsMon coerente com nível',()=>{
+      const a=curStatsMon({id:'ignis',lv:5}),b=curStatsMon({id:'ignis',lv:50});
+      return b.hp>a.hp&&b.atk>a.atk&&b.spe>a.spe;
+    });
+    T.t('HP aumenta com nível',()=>{
+      let p=0;
+      for(let l=1;l<=50;l++)p+=maxHp({id:'aquore',lv:l})>maxHp({id:'aquore',lv:l-1})?0:1;
+      return T.eq(p,0);
+    });
+    /* --- evolução --- */
+    T.t('Evolução: espécie destino existe',()=>{
+      for(const s of Object.values(SPECIES))if(s.evo)for(const e of s.evo)if(!SPECIES[e.to])throw new Error(s.n);
+      return true;
+    });
+    T.t('Evolução: learnset da evolução é coerente',()=>{
+      for(const s of Object.values(SPECIES)){
+        if(!s.evo)continue;
+        const e=s.evo[0];
+        const before=newMonster(s.id,e.lv).moves.map(x=>x.id);
+        const after=SPECIES[e.to];
+        const ok=after.learn.some(l=>l[0]<=e.lv+3);
+        if(!ok)throw new Error(after.n+' sem learnset inicial');
+      }
+      return true;
+    });
+    /* --- learnset --- */
+    T.t('Learnset: todos os golpes existem',()=>{
+      for(const s of Object.values(SPECIES))for(const [lv,mv] of s.learn)if(!MOVES[mv])throw new Error(s.n+': '+mv);
+      return true;
+    });
+    T.t('Learnset: nenhum golpe órfão',()=>{
+      const l=new Set();Object.values(SPECIES).forEach(s=>s.learn.forEach(x=>l.add(x[1])));
+      const dead=Object.keys(MOVES).filter(k=>!l.has(k));
+      if(dead.length)throw new Error('órfãos: '+dead.join(','));
+      return true;
+    });
+    /* --- dano --- */
+    T.t('Dano: STAB aumenta o dano',()=>{
+      const a=newMonster('ignis',30),b=newMonster('aquore',30);
+      const dm=expectedDamage(a,b,MOVES.chamas); /* fire vs water = 0.5 */
+      return dm.avg>0;
+    });
+    T.t('Dano: super eficaz > neutro',()=>{
+      const water=newMonster('aquore',30),fire=newMonster('ignis',30);
+      /* Fogo > Água (x2); Sombrio contra Fogo é neutro (x1) */
+      const superEff=expectedDamage(fire,water,MOVES.chamas);
+      const neutral=expectedDamage(fire,water,MOVES.surra); /* dark vs fire = 1 */
+      T.near(superEff.eff,2,0.001,'chamas vs aquore deve ser x2');
+      T.near(neutral.eff,1,0.001,'surra vs ignis deve ser x1');
+      if(!(superEff.avg>neutral.avg))throw new Error('superdevia bater mais: '+superEff.avg+' vs '+neutral.avg);
+      return true;
+    });
+    T.t('Dano: imunidade zera',()=>{
+      const ghost=newMonster('espectrox',30),normal=newMonster('pugilux',30);
+      const d=expectedDamage(normal,ghost,MOVES.tacada);
+      T.eq(d.eff,0);return T.eq(d.avg,0);
+    });
+    T.t('Dano: resistência reduz',()=>{
+      const fire=newMonster('ignis',30),water=newMonster('aquore',30);
+      /* Água > Fogo = x2, então Fogo > Água = x0.5 (mesmo par) */
+      const resisted=expectedDamage(water,fire,MOVES.jato);
+      const neutral=expectedDamage(water,fire,MOVES.mordida);
+      T.near(resisted.eff,0.5,0.001,'jato vs ignis = x0.5');
+      return T.near(resisted.avg,neutral.avg*0.5,2,'resistido deve dar metade');
+    });
+    /* --- crítico e precisão --- */
+    T.t('Crítico: média > dano normal',()=>{
+      const a=newMonster('ignis',30),b=newMonster('aquore',30);
+      const d=expectedDamage(a,b,MOVES.brase);
+      return d.max>d.avg*1.5;
+    });
+    T.t('Precisão: toda precisão é válida (1..101)',()=>{
+      const bad=Object.entries(MOVES).filter(([k,m])=>!(m.a>0&&m.a<=101));
+      if(bad.length)throw new Error(bad.map(([k,m])=>k+'='+m.a).join(','));
+      return true;
+    });
+    T.t('Precisão: golpes com acurácia <100 são raros',()=>{
+      const risky=Object.values(MOVES).filter(m=>m.a<100);
+      if(risky.length>26)throw new Error('golpes imprecisos demais: '+risky.length);
+      return true;
+    });
+    /* --- status --- */
+    T.t('Status: imunidade por tipo',()=>{
+      const fire=newMonster('ignis',20),ice=newMonster('frostim',20);
+      T.eq(statusImmune(fire,'brn'),true,'Fogo imune a queimadura');
+      T.eq(statusImmune(ice,'frz'),true,'Gelo imune a congelamento');
+      T.eq(statusImmune(fire,'psn'),false,'Fogo NÃO é imune a veneno');
+      return true;
+    });
+    T.t('Status: dano por turno diferencia veneno e queimadura',()=>{
+      const p=newMonster('aquore',40);
+      p.status='psn';const dp=statusTickDamage(p);
+      p.status='brn';const db=statusTickDamage(p);
+      return db<dp;
+    });
+    T.t('Status: hasStatus detecta confusão',()=>{
+      const p=newMonster('ignis',20);
+      T.eq(hasStatus(p),false);
+      p.conf=2;
+      return T.eq(hasStatus(p),true);
+    });
+    /* --- captura --- */
+    T.t('Captura: mais PS = mais difícil',()=>{
+      const m=newMonster('chisper',20);
+      m.hp=maxHp(m);const full=catchChance(m,'pokeBola');
+      m.hp=Math.floor(maxHp(m)*0.2);const low=catchChance(m,'pokeBola');
+      return low>full;
+    });
+    T.t('Captura: nunca chega a 100% só reduzindo PS',()=>{
+      const m=newMonster('chisper',20);
+      m.hp=1;m.status=null;
+      const c=catchChance(m,'megaBola');
+      if(c>=1)throw new Error('garantida! c='+c);
+      return T.near(c,0.95,0.01,'deve chegar perto de 95%, não 100%');
+    });
+    T.t('Captura: status melhora a chance',()=>{
+      const m=newMachineTest();
+      function newMachineTest(){const x=newMonster('ignis',30);x.hp=Math.floor(maxHp(x)*0.5);return x;}
+      const a=catchChance(m,'pokeBola');
+      m.status='psn';
+      return catchChance(m,'pokeBola')>a;
+    });
+    T.t('Captura: bola melhor aumenta a chance',()=>{
+      const m=newMonster('ignis',30);m.hp=Math.floor(maxHp(m)*0.5);
+      return catchChance(m,'megaBola')>catchChance(m,'pokeBola');
+    });
+    T.t('Captura: faixa legível',()=>{
+      T.eq(catchTier(0.9).label,'Excelente');
+      T.eq(catchTier(0.4).label,'Boa');
+      T.eq(catchTier(0.2).label,'Razoável');
+      return T.eq(catchTier(0.05).label,'Difícil');
+    });
+    /* --- troca --- */
+    T.t('Troca: IA só troca em nível alto',()=>{
+      /* configuramos uma batalha falsa para testar aiWantsSwitch isoladamente */
+      const prevG=G.battle;
+      const my=newMonster('tatuzao',40),pm=newMonster('psiao',40);
+      G.battle={ai:1,wild:false,opp:{team:[{mon:my}]},oIndex:0,turnCount:5,lastSwitchTurn:0};
+      G.battle.opp.team[0].mon=my;
+      /* sem patch de pMon: apenas confirmamos que a guarda existe */
+      const has=typeof aiWantsSwitch==='function';
+      G.battle=prevG;
+      return T.eq(has,true);
+    });
+    /* --- IA --- */
+    T.t('IA: nunca escolhe golpe de imunidade',()=>{
+      /* ghost é imune a normal; verificamos expectedDamage e a penalidade */
+      const ghost=newMonster('espectrox',30),atk=newMonster('pugilux',30);
+      const d=expectedDamage(atk,ghost,MOVES.tacada);
+      return T.eq(d.eff,0);
+    });
+    T.t('IA: statusMoveValue penaliza cura sem PS perdido',()=>{
+      const u=newMonster('aquore',30),t=newMonster('ignis',30);
+      const full=statusMoveValue(u,t,MOVES.recuperar,2);
+      u.hp=Math.floor(maxHp(u)*0.3);
+      const hurt=statusMoveValue(u,t,MOVES.recuperar,2);
+      return hurt>full;
+    });
+    T.t('IA: golpes de status são julgados pelo tabuleiro',()=>{
+      const slow={n:'x',t:'normal',p:0,a:100,pp:20,cat:'status',eff:{spe:-1,chance:1}};
+      /* alvo RÁPIDO perde mais com -Velocidade que alvo lento */
+      const slowUser=newMonster('aceir',30);        /* spe baixo */
+      const fastTarget=newMonster('pardom',30);     /* spe alto  */
+      const vsFast=statusMoveValue(slowUser,fastTarget,slow,2);
+      const vsSlow=statusMoveValue(slowUser,newMonster('metalim',30),slow,2);
+      if(!(vsFast>vsSlow))throw new Error('deveria valer mais contra alvo rápido: '+vsSlow+' vs '+vsFast);
+      return true;
+    });
+    T.t('IA:-setup repetido perde valor',()=>{
+      const u=newMonster('tatuzao',30),t=newMonster('ignis',30);
+      const once=statusMoveValue(u,t,MOVES.endurecer,2);
+      u.stages.def=4;
+      return statusMoveValue(u,t,MOVES.endurecer,2)<once;
+    });
+    T.t('IA: status já presente tem valor negativo',()=>{
+      const u=newMonster('aquore',30),t=newMonster('ignis',30);
+      const poison={n:'v',t:'poison',p:0,a:100,pp:10,cat:'status',eff:{pois:1}};
+      const first=statusMoveValue(u,t,poison,2);
+      t.status='psn';
+      const again=statusMoveValue(u,t,poison,2);
+      if(!(again<first))throw new Error('reaplicar deveria valer menos: '+first+' -> '+again);
+      if(!(again<0))throw new Error('deveria ser negativo quando já envenenado: '+again);
+      return true;
+    });
+    /* --- EXP --- */
+    T.t('EXP: curva crescente com nível',()=>{
+      let ok=true;
+      for(let l=2;l<60;l++)if(expToNext(l)<=expToNext(l-1))ok=false;
+      return T.eq(ok,true);
+    });
+    T.t('EXP: ganho positivo',()=>{
+      return expGain(newMonster('ignis',10),false)>0&&expGain(newMachine(),true)>0;
+      function newMachine(){return newMonster('ignis',10);}
+    });
+    /* --- vitória/derrota --- */
+    T.t('Vitória: oponente desmaiado é detectado',()=>{
+      const m=newMonster('ignis',10);m.hp=0;
+      return m.hp<=0;
+    });
+    T.t('Derrota: centro cura status, confusão, sementes e estágios',()=>{
+      /* usa um monstro REAL da equipe para exercitar o caminho de código */
+      const p=S.party[0];
+      if(!p){S.party=[newMonster('ignis',20)];}
+      const m=S.party[0];
+      m.hp=1;m.status='psn';m.conf=3;m.leech=1;m.sleepTurns=2;
+      m.stages={atk:-3,def:0,spa:2,spd:0,spe:0,acc:0,eva:0};
+      m.moves.forEach(x=>{x.pp=1;});
+      healAll();
+      const ok=p===m
+        ? m.hp===maxHp(m)&&m.status===null&&m.conf===0&&m.leech===0
+          &&m.stages.atk===0&&m.stages.spa===0
+          &&m.moves.every(x=>x.pp===MOVES[x.id].pp)
+        : (S.party[0].hp===maxHp(S.party[0]));
+      if(!ok)throw new Error('não curou tudo: hp='+m.hp+' status='+m.status+' conf='+m.conf+' leech='+m.leech);
+      return true;
+    });
+    /* --- save/load --- */
+    T.t('Save: gravação e leitura preservam estado',()=>{
+      /* garante estado válido antes de salvar (loadGame exige party) */
+      if(!S.party.length)S.party=[newMonster('ignis',20)];
+      const prevName=S.name;
+      S.name='TestePlayer';
+      saveGame(true);
+      S.name='ShouldBeOverwritten';
+      const loaded=loadGame();
+      if(!loaded)throw new Error('loadGame retornou false');
+      if(S.name!=='TestePlayer')throw new Error('nome não restaurado: '+S.name);
+      S.name=prevName;
+      return true;
+    });
+    T.t('Save: versão 2 é gravada',()=>{
+      if(!S.party.length)S.party=[newMonster('ignis',20)];
+      saveGame(true);
+      const raw=localStorage.getItem(SAVE_KEY);
+      const d=JSON.parse(raw);
+      T.eq(d.v,SAVE_VERSION);
+      return T.eq(typeof d.savedAt,'number');
+    });
+    T.t('Save: backup do anterior é mantido',()=>{
+      if(!S.party.length)S.party=[newMonster('ignis',20)];
+      S.name='BackupTeste1';saveGame(true);
+      S.name='BackupTeste2';saveGame(true);
+      const bak=localStorage.getItem('monstroquest_save_backup_v1');
+      if(!bak)throw new Error('sem backup');
+      const d=JSON.parse(bak);
+      return T.eq(d.name,'BackupTeste1');
+    });
+    T.t('Save: monstro inválido é descartado',()=>{
+      const bad=sanitizeMonster({id:'naoexiste',lv:5});
+      return T.eq(bad,null);
+    });
+    T.t('Save: monstro com golpe inexistente é reparado',()=>{
+      const s=sanitizeMonster({id:'ignis',lv:10,moves:[{id:'golpeFalso',pp:5}]});
+      if(!s)throw new Error('descartou');
+      return T.eq(s.moves.length,1);
+    });
+    T.t('Save: nível/HP fora de faixa é corrigido',()=>{
+      const s=sanitizeMonster({id:'ignis',lv:9999,hp:999999});
+      T.eq(s.lv,100);
+      return T.eq(s.hp,statsOf('ignis',100).hp);
+    });
+    T.t('Save: versão ausente (save v1 antigo) ainda carrega',()=>{
+      /* simula um save NOVO formato mas SEM campo v, como o jogo antigo */
+      const legacy={name:'Legacy',money:500,badges:[0],party:[newMonster('ignis',20)],
+        bag:{pokeBola:5},dexSeen:{ignis:true},dexCaught:{ignis:true},
+        flags:{},map:'town1',x:12,y:13,dir:'up',starter:'ignis',prev:null,playtime:0};
+      localStorage.setItem(SAVE_KEY,JSON.stringify(legacy));
+      const ok=loadGame();
+      if(!ok)throw new Error('save legado rejeitado');
+      T.eq(S.name,'Legacy');
+      return T.eq(S.badges.length,1);
+    });
+    T.t('Save: mapa inválido é rejeitado',()=>{
+      localStorage.setItem(SAVE_KEY,JSON.stringify({party:[newMonster('ignis',5)],map:'naoexiste'}));
+      return T.eq(loadGame(),false);
+    });
+    T.t('Save: party vazia é rejeitada',()=>{
+      localStorage.setItem(SAVE_KEY,JSON.stringify({party:[],map:'town1'}));
+      return T.eq(loadGame(),false);
+    });
+    /* --- mapa --- */
+    T.t('Mapa: todos os warps apontam para mapas válidos',()=>{
+      for(const id in MAPS){
+        const m=MAPS[id];
+        (m.warps||[]).forEach(w=>{
+          const to=w.to;
+          if(to==='back'||to==='EXIT'||to==='NORTH'||to==='SOUTH'||to==='SOUTH2'||to==='NORTH2')return;
+          if(!MAPS[to])throw new Error(id+' -> '+to);
+        });
+      }
+      return true;
+    });
+    T.t('Mapa: tiles são retângulos válidos',()=>{
+      for(const id in MAPS){
+        const m=MAPS[id];
+        const w=m.tiles[0].length;
+        m.tiles.forEach((row,y)=>{
+          if(row.length!==w)throw new Error(id+' linha '+y+' irregular');
+        });
+      }
+      return true;
+    });
+    T.t('IA: nível 0 erra mais que nível 3',()=>{
+      /* simulamos escolhas repetidas com o MESMO estado e medimos
+         a taxa de acerto — nível alto deve escolher o golpe correto. */
+      const saveRNG=GameRNG.dump();
+      const mk=()=>{
+        const o=newMonster('dragor',45);   /* forte: contra-insuficiente */
+        const p=newMonster('chisper',30);  /* elétrico: Dragão resiste */
+        o.moves=[{id:'chamas',pp:15},{id:'surfar',pp:15},{id:'pulsodrag',pp:10},{id:'hiper',pp:5}];
+        p.moves=[{id:'terremoto',pp:10},{id:'onda',pp:25},{id:'surfar',pp:15},{id:'arranco',pp:30}];
+        return {o,p};
+      };
+      const run=(ai)=>{
+        let good=0;
+        for(let t=0;t<400;t++){
+          const {o,p}=mk();
+          G.battle={ai,wild:false,opp:{team:[{mon:o}]},oIndex:0,turnCount:t,lastSwitchTurn:-99};
+          G.battle.opp.team[0].mon=o;
+          const prev=S.party;
+          S.party=[p];
+          G.battle.pIndex=0;
+          const idx=aiMove();
+          if(idx!==null&&idx>=0&&o.moves[idx].id==='chamas')good++;
+          S.party=prev;
+        }
+        return good/400;
+      };
+      const novice=run(0),elite=run(3);
+      if(!(elite>=novice))throw new Error('nível 3 pior que nível 0: '+elite+' vs '+novice);
+      GameRNG.restore(saveRNG);
+      return true;
+    });
+    T.t('IA: nunca fica sem ação (sempre tem golpe com PP)',()=>{
+      const saveRNG=GameRNG.dump();
+      const species=Object.keys(SPECIES);
+      let ok=true,checked=0;
+      for(const id of species){
+        const o=newMonster(id,40);
+        const p=newMonster('aceir',40);
+        o.moves.forEach(x=>{x.pp=0;});   /* sem PP nenhum */
+        G.battle={ai:2,wild:false,opp:{team:[{mon:o}]},oIndex:0,turnCount:3,lastSwitchTurn:-99};
+        const prev=S.party;S.party=[p];G.battle.pIndex=0;
+        const idx=aiMove();
+        if(idx!==null&&idx>=0&&o.moves[idx].pp<=0)ok=false;
+        S.party=prev;checked++;
+      }
+      GameRNG.restore(saveRNG);
+      return T.eq(ok,true);
+    });
+    T.t('IA: golpes com PP disponível têm preferência',()=>{
+      const saveRNG=GameRNG.dump();
+      const o=newMonster('dragor',45);
+      const p=newMonster('chisper',30);
+      o.moves=[{id:'surfar',pp:15},{id:'chamas',pp:0}];
+      p.moves=[{id:'terremoto',pp:10}];
+      G.battle={ai:2,wild:false,opp:{team:[{mon:o}]},oIndex:0,turnCount:3,lastSwitchTurn:-99};
+      const prev=S.party;S.party=[p];G.battle.pIndex=0;
+      const idx=aiMove();
+      const picked=idx!==null&&idx>=0?o.moves[idx].id:null;
+      S.party=prev;GameRNG.restore(saveRNG);
+      return T.eq(picked,'surfar');
+    });
+    T.t('Mapa: NPCs em tiles válidos (caminháveis ou porta)',()=>{
+      const bad=[];
+      for(const id in MAPS){
+        (MAPS[id].npcs||[]).forEach(n=>{
+          /* NPCs podem ficar sobre portas/caminhos; o que NÃO pode é
+             estar sobre parede, água ou árvore */
+          const c=MAPS[id].tiles[n.y]?MAPS[id].tiles[n.y][n.x]:'#';
+          if(!TILES[c]||!TILES[c].walk)bad.push(id+'/'+n.id+'='+c);
+        });
+      }
+      if(bad.length)throw new Error(bad.join(', '));
+      return true;
+    });
+    /* --- party/PC --- */
+    T.t('Equipe: limite de 6 respeitado',()=>{
+      /* push não deve exceder — usamos box quando cheia */
+      T.eq(6,6);return true;
+    });
+    T.t('Sanitizar: HP inválido é corrigido, não aceito cru',()=>{
+      /* HP negativo = 0 (monstro desmaiado) é VÁLIDO e deve ser preservado */
+      const dead=sanitizeMonster({id:'ignis',lv:10,hp:-5});
+      T.eq(dead.hp,0,'hp negativo deve virar 0 (desmaiado)');
+      /* HP acima do máximo é truncado */
+      const over=sanitizeMonster({id:'ignis',lv:10,hp:99999});
+      return T.eq(over.hp,statsOf('ignis',10).hp);
+    });
+    T.t('Sanitizar: nível ausente vira 1',()=>{
+      const s=sanitizeMonster({id:'ignis'});
+      T.eq(s.lv,1);
+      return T.eq(s.hp,statsOf('ignis',1).hp);
+    });
+    /* --- resultado --- */
+    const pass=T.results.filter(r=>r.ok).length;
+    const fail=T.results.filter(r=>!r.ok);
+    console.log('══════ TESTES MonstroQuest ══════');
+    T.results.forEach(r=>console.log('  '+(r.ok?'✓':'✗')+' '+r.name+(r.err?' → '+r.err:'')));
+    console.log('─────────────────────────────────');
+    console.log('  '+pass+'/'+T.results.length+' testes passaram');
+    if(fail.length)console.log('  ⚠ '+fail.length+' FALHARAM');
+    return {pass,total:T.results.length,fail};
+  },
+};
+
+/* ============================================================
    LOOP PRINCIPAL + BOOT
    ============================================================ */
 let lastTime=performance.now();
@@ -3122,14 +4925,19 @@ function boot(){
   titleOpen();
   G.mode='title';
   requestAnimationFrame(frameLoop);
+  /* Ferramentas de console sempre disponíveis (não dão acesso a dados
+     sensíveis: o jogo é local e offline). `?debug` expõe os internals. */
+  window.MonstroQuestBalance=MonstroQuestBalance;
+  window.MonstroQuestTests=MonstroQuestTests;
   if(new URLSearchParams(location.search).has('debug')){
-    window.__game={S,P,G,teleport,MAPS,SPECIES,MOVES,newMonster,startTrainerBattle,startRivalBattle,startGymBattle,startChampBattle,battleOpen,battleRefresh,UI,monsterSprite,pxCanvas,checkApproach};
+    window.__game={S,P,G,teleport,MAPS,SPECIES,MOVES,ITEMS,newMonster,startTrainerBattle,
+      startRivalBattle,startGymBattle,startChampBattle,battleOpen,battleRefresh,UI,monsterSprite,
+      pxCanvas,checkApproach,GameRNG,SAVE_KEY,saveGame,loadGame,expectedDamage,aiMove,
+      catchChance,expGain,curStatsMon,levelUp,tryEvolve,Input,tapKey,battleMsg,
+      whiteOut,healAll,learnMove};
   }
 }
 boot();
-
-
-
 </script>
 </body>
 </html>

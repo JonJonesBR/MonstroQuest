@@ -4,6 +4,15 @@ Thumbs.db
 .DS_Store
 *.tmp
 
-# Guia interno de agente (não versionado por convenção)
+# Documentação deliberadamente local (ver NÃO COMMITAR.md, seção Publicação).
+# A allowlist do remoto é: index.html, README.md, .gitignore.
+# NÃO use `git add -f` em nenhum destes.
 NÃO COMMITAR.md
+AGENTS.md
+PLANO_MELHORIAS.md
+PLANO_MELHORIAS_PROGRESSO.md
+TEST-PLAN.md
 .omp/
+
+# Ferramentas de teste, se algum dia forem movidas para dentro do projeto.
+node_modules/
